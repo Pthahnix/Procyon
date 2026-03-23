@@ -252,3 +252,63 @@ class TestStatusCommand:
         assert rc == 0
         assert isinstance(out, str)
         assert "test_job" in out
+
+
+class TestKillCommand:
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        os.environ['PROCYON_HOME'] = self.tmpdir
+
+    def teardown_method(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        os.environ.pop('PROCYON_HOME', None)
+
+    def test_kill_no_tty_refused(self):
+        """subprocess has no TTY — kill must refuse."""
+        pid = os.getpid()
+        run_procyon('register', '--name', 'test_job',
+                    '--pid', str(pid), '--cmd', 'echo hello')
+        rc, out, err = run_procyon('kill', '--name', 'test_job')
+        assert rc != 0
+        assert out["code"] == "NO_TTY"
+
+    def test_kill_not_found(self):
+        rc, out, err = run_procyon('kill', '--name', 'nonexistent')
+        assert rc != 0
+        assert out["code"] == "NOT_FOUND"
+
+    def test_kill_already_dead(self):
+        run_procyon('register', '--name', 'dead_job',
+                    '--pid', '999999999', '--cmd', 'echo hello')
+        rc, out, err = run_procyon('kill', '--name', 'dead_job')
+        # NO_TTY takes precedence (check order: NOT_FOUND → NO_TTY → ALREADY_DEAD)
+        assert rc != 0
+        assert out["code"] == "NO_TTY"
+
+    def test_kill_already_dead_with_mocked_tty(self):
+        """Direct unit test: mock isatty to test ALREADY_DEAD code path."""
+        from unittest.mock import patch
+        sys.path.insert(0, os.path.dirname(PROCYON))
+        from procyon import cmd_kill, ensure_dirs, load_registry, save_registry
+        ensure_dirs()
+        # Register a dead PID
+        reg = load_registry()
+        reg["processes"]["dead_job"] = {
+            "pid": 999999999, "cmd": "echo hi", "checkpoint_dir": None,
+            "started": "2026-03-23T00:00:00", "registered_by": "manual",
+            "done_marker": "checkpoint_final.pt"
+        }
+        save_registry(reg)
+        # Mock isatty and capture SystemExit + stdout
+        import io
+        with patch('sys.stdin') as mock_stdin, \
+             patch('sys.stdout', new_callable=io.StringIO) as mock_stdout:
+            mock_stdin.isatty.return_value = True
+            args = type('Args', (), {'name': 'dead_job'})()
+            try:
+                cmd_kill(args)
+            except SystemExit:
+                pass
+            output = json.loads(mock_stdout.getvalue())
+            assert output["code"] == "ALREADY_DEAD"

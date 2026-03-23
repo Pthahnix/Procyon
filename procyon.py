@@ -5,7 +5,9 @@ import argparse
 import fcntl
 import json
 import os
+import signal
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -233,7 +235,55 @@ def cmd_status(args):
 
 
 def cmd_kill(args):
-    json_err("NOT_IMPLEMENTED", "kill is not yet implemented")
+    ensure_dirs()
+    reg = load_registry()
+    # 1. NOT_FOUND check
+    if args.name not in reg["processes"]:
+        json_err("NOT_FOUND", f"Process '{args.name}' not found in registry.")
+    # 2. TTY check (MUST come before ALREADY_DEAD per spec)
+    if not sys.stdin.isatty():
+        json_err("NO_TTY", "Kill requires an interactive terminal. Refusing non-interactive kill to protect against rogue agents.")
+    proc = reg["processes"][args.name]
+    pid = proc["pid"]
+    # 3. ALREADY_DEAD check
+    if not pid_alive(pid):
+        json_err("ALREADY_DEAD", f"Process '{args.name}' (PID {pid}) is no longer alive. Use 'procyon unregister' to clean up.")
+    # 4. Compute uptime for display
+    try:
+        started_dt = datetime.fromisoformat(proc["started"])
+        uptime_secs = int((datetime.now() - started_dt).total_seconds())
+        h, m = divmod(uptime_secs // 60, 60)
+        uptime_str = f"{h}h {m}m"
+    except Exception:
+        uptime_str = "unknown"
+    # 5. Display summary and prompt
+    print(f"\n  PROCYON SAFE KILL")
+    print(f"   Name:    {args.name}")
+    print(f"   PID:     {pid}")
+    print(f"   Running: {uptime_str}")
+    print(f"   Cmd:     {proc['cmd']}\n")
+    try:
+        confirm = input(f"   Type the job name to confirm kill, or Ctrl+C to abort: ").strip()
+    except (KeyboardInterrupt, EOFError):
+        print("\nAborted.")
+        sys.exit(0)
+    if confirm != args.name:
+        print(f"   Confirmation mismatch. Aborting.")
+        sys.exit(0)
+    # 6. Kill: SIGTERM first, then SIGKILL if needed
+    # Remove from registry first
+    checkpoint_dir = proc.get("checkpoint_dir")
+    remove_lock(args.name, checkpoint_dir)
+    del reg["processes"][args.name]
+    save_registry(reg)
+    os.kill(pid, signal.SIGTERM)
+    for _ in range(20):  # up to 10 seconds
+        time.sleep(0.5)
+        if not pid_alive(pid):
+            break
+    else:
+        os.kill(pid, signal.SIGKILL)
+    json_out({"status": "killed", "name": args.name, "pid": pid})
 
 
 def cmd_watch(args):
