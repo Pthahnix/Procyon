@@ -451,7 +451,58 @@ def cmd_run(args):
 
 
 def cmd_issue(args):
-    json_err("NOT_IMPLEMENTED", "issue is not yet implemented")
+    """File an issue for future iteration."""
+    import re
+
+    # Determine issues directory
+    issues_dir_env = os.environ.get('PROCYON_ISSUES_DIR')
+    if issues_dir_env:
+        issues_dir = Path(issues_dir_env)
+    else:
+        # Auto-detect project root (walk up from __file__ looking for CLAUDE.md)
+        here = Path(__file__).parent.resolve()
+        project_root = here
+        for parent in [here] + list(here.parents):
+            if (parent / 'CLAUDE.md').exists():
+                project_root = parent
+                break
+        issues_dir = project_root / 'issues'
+
+    issues_dir.mkdir(parents=True, exist_ok=True)
+
+    # Count existing .md files → next number
+    existing = sorted([f for f in issues_dir.iterdir() if f.suffix == '.md'])
+    next_num = len(existing) + 1
+
+    # Slugify title
+    slug = re.sub(r'[^a-z0-9]+', '-', args.title.lower()).strip('-')[:50]
+
+    # Filename: YYYY-MM-DD_NNN_slug.md
+    date_str = datetime.now().strftime('%Y-%m-%d')
+    filename = f"{date_str}_{next_num:03d}_{slug}.md"
+    filepath = issues_dir / filename
+
+    # Write frontmatter + body
+    content = f"""---
+title: {args.title}
+priority: {args.priority}
+tag: {args.tag}
+date: {datetime.now().isoformat()}
+author: claude-code
+status: open
+---
+
+{args.body}
+"""
+    filepath.write_text(content)
+
+    # Return relative path if possible
+    try:
+        rel_path = str(filepath.relative_to(Path.cwd()))
+    except ValueError:
+        rel_path = str(filepath)
+
+    json_out({"status": "created", "path": rel_path})
 
 
 # ---------------------------------------------------------------------------

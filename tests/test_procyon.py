@@ -481,3 +481,53 @@ class TestRunCommand:
         # Cleanup: send SIGINT (which should be forwarded to child)
         os.kill(proc.pid, signal.SIGINT)
         proc.wait(timeout=5)
+
+
+class TestIssueCommand:
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        os.environ['PROCYON_HOME'] = self.tmpdir
+        self.issues_dir = os.path.join(self.tmpdir, "issues")
+        os.makedirs(self.issues_dir)
+        os.environ['PROCYON_ISSUES_DIR'] = self.issues_dir
+
+    def teardown_method(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        os.environ.pop('PROCYON_HOME', None)
+        os.environ.pop('PROCYON_ISSUES_DIR', None)
+
+    def test_issue_creates_file(self):
+        rc, out, err = run_procyon('issue', '--title', 'Test bug',
+                                   '--body', 'Something is broken')
+        assert rc == 0
+        assert out["status"] == "created"
+        assert "path" in out
+        # Verify file exists and has frontmatter
+        files = os.listdir(self.issues_dir)
+        md_files = [f for f in files if f.endswith('.md')]
+        assert len(md_files) == 1
+        content = open(os.path.join(self.issues_dir, md_files[0])).read()
+        assert "title: Test bug" in content
+        assert "status: open" in content
+        assert "Something is broken" in content
+
+    def test_issue_sequential_numbering(self):
+        run_procyon('issue', '--title', 'First', '--body', 'body1')
+        run_procyon('issue', '--title', 'Second', '--body', 'body2')
+        files = sorted(os.listdir(self.issues_dir))
+        md_files = [f for f in files if f.endswith('.md')]
+        assert len(md_files) == 2
+        assert '_001_' in md_files[0]
+        assert '_002_' in md_files[1]
+
+    def test_issue_with_priority_and_tag(self):
+        rc, out, err = run_procyon('issue', '--title', 'Urgent',
+                                   '--body', 'Fix now',
+                                   '--priority', 'high', '--tag', 'feature')
+        assert rc == 0
+        files = os.listdir(self.issues_dir)
+        md_files = [f for f in files if f.endswith('.md')]
+        content = open(os.path.join(self.issues_dir, md_files[0])).read()
+        assert "priority: high" in content
+        assert "tag: feature" in content
