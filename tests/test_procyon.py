@@ -531,3 +531,73 @@ class TestIssueCommand:
         content = open(os.path.join(self.issues_dir, md_files[0])).read()
         assert "priority: high" in content
         assert "tag: feature" in content
+
+
+class TestE2E:
+    """Full workflow: run → status → verify → child exits → verify unregistered."""
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        os.environ['PROCYON_HOME'] = self.tmpdir
+        os.environ['PROCYON_ISSUES_DIR'] = os.path.join(self.tmpdir, 'issues')
+        os.makedirs(os.environ['PROCYON_ISSUES_DIR'])
+
+    def teardown_method(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        os.environ.pop('PROCYON_HOME', None)
+        os.environ.pop('PROCYON_ISSUES_DIR', None)
+
+    def test_full_workflow_run_status_exit(self):
+        # Start a short-lived child via procyon run
+        marker = os.path.join(self.tmpdir, "done.txt")
+        script = f'import time; open("{marker}","w").write("ok"); time.sleep(2)'
+        proc = subprocess.Popen(
+            [sys.executable, PROCYON, 'run', '--name', 'e2e_test',
+             '--', sys.executable, '-c', script],
+            env={**os.environ, 'PROCYON_HOME': self.tmpdir}
+        )
+        time.sleep(1)
+        # While running: status should show it
+        rc, out, err = run_procyon('status')
+        assert len(out) == 1
+        assert out[0]["name"] == "e2e_test"
+        assert out[0]["alive"] is True
+        # Wait for child to finish
+        proc.wait(timeout=10)
+        # After exit: status should be empty
+        rc, out, err = run_procyon('status')
+        assert out == []
+        # Marker file should exist
+        assert os.path.exists(marker)
+
+    def test_duplicate_prevention_e2e(self):
+        # Start a long-lived child
+        proc = subprocess.Popen(
+            [sys.executable, PROCYON, 'run', '--name', 'dup_test',
+             '--', sys.executable, '-c', 'import time; time.sleep(30)'],
+            env={**os.environ, 'PROCYON_HOME': self.tmpdir}
+        )
+        time.sleep(1)
+        # Try to register same name — should fail
+        rc, out, err = run_procyon('register', '--name', 'dup_test',
+                                   '--pid', str(os.getpid()), '--cmd', 'echo hi')
+        assert rc != 0
+        assert out["code"] == "DUPLICATE_PROCESS"
+        # Try to run same name — should fail
+        proc2 = subprocess.run(
+            [sys.executable, PROCYON, 'run', '--name', 'dup_test',
+             '--', 'echo', 'hello'],
+            capture_output=True, text=True,
+            env={**os.environ, 'PROCYON_HOME': self.tmpdir}
+        )
+        assert proc2.returncode != 0
+        # Cleanup
+        os.kill(proc.pid, signal.SIGINT)
+        proc.wait(timeout=5)
+
+    def test_issue_creation_e2e(self):
+        rc, out, err = run_procyon('issue', '--title', 'E2E test issue',
+                                   '--body', 'Testing issue creation',
+                                   '--priority', 'low', '--tag', 'improvement')
+        assert rc == 0
+        assert out["status"] == "created"
