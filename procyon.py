@@ -2,6 +2,7 @@
 """Procyon — Process Guardian CLI for ML workloads."""
 
 import argparse
+import ctypes
 import fcntl
 import json
 import os
@@ -369,7 +370,84 @@ def cmd_watch(args):
 
 
 def cmd_run(args):
-    json_err("NOT_IMPLEMENTED", "run is not yet implemented")
+    ensure_dirs()
+    # Parse cmd_args — strip leading '--' if present
+    cmd_args = list(args.cmd_args)
+    if cmd_args and cmd_args[0] == '--':
+        cmd_args = cmd_args[1:]
+    if not cmd_args:
+        json_err("NO_CMD", "No command specified. Usage: procyon run --name NAME -- COMMAND [ARGS...]")
+
+    # Anti-duplicate check (same as register)
+    existing_lock = read_lock(args.name, args.checkpoint_dir)
+    if existing_lock:
+        if pid_alive(existing_lock["pid"]):
+            json_err("DUPLICATE_PROCESS", f"Process '{args.name}' already running (PID {existing_lock['pid']}).")
+        else:
+            remove_lock(args.name, args.checkpoint_dir)
+
+    # Fork: child execvp, parent registers + watches
+    child_pid = os.fork()
+
+    if child_pid == 0:
+        # CHILD: try to set process name, then execvp
+        try:
+            libc = ctypes.CDLL("libc.so.6", use_errno=True)
+            name_bytes = f"procyon:{args.name}".encode()[:15]
+            libc.prctl(15, name_bytes, 0, 0, 0)  # PR_SET_NAME = 15
+        except Exception:
+            pass
+        try:
+            os.execvp(cmd_args[0], cmd_args)
+        except Exception as e:
+            print(json.dumps({"status": "error", "code": "EXEC_FAILED", "message": str(e)}))
+            os._exit(1)
+
+    # PARENT: register child, intercept signals, wait
+    # Register in registry
+    write_lock(args.name, child_pid, " ".join(cmd_args), args.checkpoint_dir)
+    reg = load_registry()
+    reg["processes"][args.name] = {
+        "pid": child_pid,
+        "cmd": " ".join(cmd_args),
+        "checkpoint_dir": args.checkpoint_dir,
+        "started": datetime.now().isoformat(),
+        "registered_by": "run",
+        "done_marker": args.done_marker,
+    }
+    save_registry(reg)
+    print(json.dumps({"status": "started", "name": args.name, "pid": child_pid, "cmd": " ".join(cmd_args)}, default=str))
+    sys.stdout.flush()
+
+    # Signal handlers: SIGTERM/SIGHUP intercepted (no-op), SIGINT forwarded to child
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+
+    def forward_sigint(signum, frame):
+        try:
+            os.kill(child_pid, signal.SIGINT)
+        except ProcessLookupError:
+            pass
+    signal.signal(signal.SIGINT, forward_sigint)
+
+    # Wait for child to exit
+    try:
+        _, status = os.waitpid(child_pid, 0)
+        exit_code = os.waitstatus_to_exitcode(status)
+    except ChildProcessError:
+        exit_code = 0
+
+    # Unregister (clean up)
+    try:
+        remove_lock(args.name, args.checkpoint_dir)
+        reg = load_registry()
+        if args.name in reg["processes"]:
+            del reg["processes"][args.name]
+            save_registry(reg)
+    except Exception:
+        pass
+
+    sys.exit(exit_code)
 
 
 def cmd_issue(args):

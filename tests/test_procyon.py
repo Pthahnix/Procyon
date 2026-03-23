@@ -423,3 +423,61 @@ class TestWatchCommand:
         rc, out, err = run_procyon('status')
         assert out == []  # unregistered
         run_procyon('watch', '--stop')
+
+
+class TestRunCommand:
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        os.environ['PROCYON_HOME'] = self.tmpdir
+
+    def teardown_method(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        os.environ.pop('PROCYON_HOME', None)
+
+    def test_run_registers_and_unregisters(self):
+        """Run a short command — should auto-register then auto-unregister."""
+        marker = os.path.join(self.tmpdir, "marker.txt")
+        rc = subprocess.call(
+            [sys.executable, PROCYON, 'run', '--name', 'test_run',
+             '--', sys.executable, '-c', f'open("{marker}","w").write("ok")'],
+            env={**os.environ, 'PROCYON_HOME': self.tmpdir}
+        )
+        assert rc == 0
+        assert os.path.exists(marker)
+        # Should be unregistered after child exits
+        rc2, out, err = run_procyon('status')
+        assert out == []  # empty, child done
+
+    def test_run_blocks_duplicate(self):
+        """If a job with same name is already registered, run should refuse."""
+        pid = os.getpid()
+        run_procyon('register', '--name', 'test_run',
+                    '--pid', str(pid), '--cmd', 'echo hi')
+        proc = subprocess.run(
+            [sys.executable, PROCYON, 'run', '--name', 'test_run',
+             '--', 'echo', 'hello'],
+            capture_output=True, text=True,
+            env={**os.environ, 'PROCYON_HOME': self.tmpdir}
+        )
+        assert proc.returncode != 0
+        out = json.loads(proc.stdout)
+        assert out["code"] == "DUPLICATE_PROCESS"
+
+    def test_run_parent_ignores_sigterm(self):
+        """Parent should not die on SIGTERM — it intercepts and drops it."""
+        # Start a long-running child
+        proc = subprocess.Popen(
+            [sys.executable, PROCYON, 'run', '--name', 'test_sig',
+             '--', sys.executable, '-c', 'import time; time.sleep(30)'],
+            env={**os.environ, 'PROCYON_HOME': self.tmpdir}
+        )
+        time.sleep(1)
+        # Send SIGTERM to parent — should be intercepted
+        os.kill(proc.pid, signal.SIGTERM)
+        time.sleep(0.5)
+        # Parent should still be alive
+        assert proc.poll() is None
+        # Cleanup: send SIGINT (which should be forwarded to child)
+        os.kill(proc.pid, signal.SIGINT)
+        proc.wait(timeout=5)
