@@ -1,5 +1,5 @@
 # tests/test_procyon.py
-import subprocess, json, sys, os
+import subprocess, json, sys, os, tempfile
 
 PROCYON = os.path.join(os.path.dirname(__file__), '..', 'procyon.py')
 
@@ -35,3 +35,41 @@ class TestCLISkeleton:
     def test_invalid_command_returns_nonzero(self):
         rc, out, err = run_procyon('nonexistent')
         assert rc != 0
+
+
+class TestRegistry:
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        os.environ['PROCYON_HOME'] = self.tmpdir  # override ~/.procyon
+
+    def teardown_method(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        os.environ.pop('PROCYON_HOME', None)
+
+    def test_load_empty_registry(self):
+        from procyon import load_registry, ensure_dirs
+        ensure_dirs()
+        reg = load_registry()
+        assert reg == {"processes": {}, "version": "0.1.0"}
+
+    def test_save_and_load_roundtrip(self):
+        from procyon import load_registry, save_registry, ensure_dirs
+        ensure_dirs()
+        reg = load_registry()
+        reg["processes"]["test_job"] = {
+            "pid": 12345, "cmd": "echo hello",
+            "checkpoint_dir": None, "started": "2026-03-23T00:00:00",
+            "registered_by": "manual", "done_marker": "checkpoint_final.pt"
+        }
+        save_registry(reg)
+        reg2 = load_registry()
+        assert reg2["processes"]["test_job"]["pid"] == 12345
+
+    def test_pid_alive_current_process(self):
+        from procyon import pid_alive
+        assert pid_alive(os.getpid()) is True
+
+    def test_pid_alive_dead_process(self):
+        from procyon import pid_alive
+        assert pid_alive(999999999) is False

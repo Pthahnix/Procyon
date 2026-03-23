@@ -2,6 +2,7 @@
 """Procyon — Process Guardian CLI for ML workloads."""
 
 import argparse
+import fcntl
 import json
 import os
 import sys
@@ -10,11 +11,78 @@ from pathlib import Path
 VERSION = "0.1.0"
 
 # Path constants — check PROCYON_HOME for test isolation
-PROCYON_DIR = Path(os.environ.get('PROCYON_HOME', str(Path.home() / '.procyon')))
-REGISTRY_PATH = PROCYON_DIR / 'registry.json'
-LOCKS_DIR = PROCYON_DIR / 'locks'
-WATCHDOG_LOG = PROCYON_DIR / 'watchdog.log'
-WATCHDOG_PID = PROCYON_DIR / 'watchdog.pid'
+def _procyon_dir():
+    return Path(os.environ.get('PROCYON_HOME', str(Path.home() / '.procyon')))
+
+
+def _registry_path():
+    return _procyon_dir() / 'registry.json'
+
+
+def _locks_dir():
+    return _procyon_dir() / 'locks'
+
+
+def _watchdog_log():
+    return _procyon_dir() / 'watchdog.log'
+
+
+def _watchdog_pid():
+    return _procyon_dir() / 'watchdog.pid'
+
+
+# Module-level aliases (kept for backward compatibility; prefer the functions above)
+PROCYON_DIR = _procyon_dir()
+REGISTRY_PATH = _procyon_dir() / 'registry.json'
+LOCKS_DIR = _procyon_dir() / 'locks'
+WATCHDOG_LOG = _procyon_dir() / 'watchdog.log'
+WATCHDOG_PID = _procyon_dir() / 'watchdog.pid'
+
+
+# ---------------------------------------------------------------------------
+# Directory / registry helpers
+# ---------------------------------------------------------------------------
+
+def ensure_dirs():
+    """Create PROCYON_DIR and LOCKS_DIR if they don't exist."""
+    os.makedirs(_procyon_dir(), exist_ok=True)
+    os.makedirs(_locks_dir(), exist_ok=True)
+
+
+def load_registry():
+    """Load the registry JSON, acquiring a shared (read) lock.
+
+    Returns the default empty registry dict if the file doesn't exist yet.
+    """
+    registry_path = _registry_path()
+    if not registry_path.exists():
+        return {"processes": {}, "version": VERSION}
+    with open(registry_path, 'r') as f:
+        fcntl.flock(f, fcntl.LOCK_SH)
+        data = json.load(f)
+        # lock released when file is closed
+    return data
+
+
+def save_registry(reg):
+    """Write registry dict to disk, acquiring an exclusive (write) lock."""
+    with open(_registry_path(), 'w') as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        f.write(json.dumps(reg, indent=2))
+        # lock released when file is closed
+
+
+def pid_alive(pid):
+    """Return True if *pid* refers to a running process, False otherwise."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Process exists but is owned by another user
+        return True
+
 
 
 # ---------------------------------------------------------------------------
