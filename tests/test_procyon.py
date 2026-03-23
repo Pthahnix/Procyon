@@ -125,3 +125,86 @@ class TestLockFiles:
         write_lock("test_job", os.getpid(), "echo hi", None)  # alive PID
         is_stale = check_stale_lock("test_job", None)
         assert is_stale is False
+
+
+class TestRegisterCommand:
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        os.environ['PROCYON_HOME'] = self.tmpdir
+
+    def teardown_method(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        os.environ.pop('PROCYON_HOME', None)
+
+    def test_register_success(self):
+        pid = os.getpid()
+        rc, out, err = run_procyon('register', '--name', 'test_job',
+                                   '--pid', str(pid), '--cmd', 'echo hello')
+        assert rc == 0
+        assert out["status"] == "registered"
+        assert out["name"] == "test_job"
+
+    def test_register_duplicate_alive_pid_refused(self):
+        pid = os.getpid()
+        run_procyon('register', '--name', 'test_job',
+                    '--pid', str(pid), '--cmd', 'echo hello')
+        rc, out, err = run_procyon('register', '--name', 'test_job',
+                                   '--pid', str(pid), '--cmd', 'echo hello')
+        assert rc != 0
+        assert out["code"] == "DUPLICATE_PROCESS"
+
+    def test_register_stale_lock_cleaned(self):
+        # Register with dead PID, then register again — should succeed
+        run_procyon('register', '--name', 'test_job',
+                    '--pid', '999999999', '--cmd', 'echo hello')
+        pid = os.getpid()
+        rc, out, err = run_procyon('register', '--name', 'test_job',
+                                   '--pid', str(pid), '--cmd', 'echo hello')
+        assert rc == 0
+        assert out["status"] == "registered"
+
+    def test_register_with_checkpoint_dir(self):
+        pid = os.getpid()
+        ckpt = os.path.join(self.tmpdir, "ckpts")
+        os.makedirs(ckpt)
+        rc, out, err = run_procyon('register', '--name', 'test_job',
+                                   '--pid', str(pid), '--cmd', 'echo hi',
+                                   '--checkpoint_dir', ckpt)
+        assert rc == 0
+        assert os.path.exists(os.path.join(ckpt, "procyon.lock"))
+
+    def test_register_stores_done_marker_and_registered_by(self):
+        pid = os.getpid()
+        run_procyon('register', '--name', 'test_job',
+                    '--pid', str(pid), '--cmd', 'echo hi',
+                    '--done-marker', 'custom_done.flag')
+        from procyon import load_registry
+        reg = load_registry()
+        entry = reg["processes"]["test_job"]
+        assert entry["done_marker"] == "custom_done.flag"
+        assert entry["registered_by"] == "manual"
+
+
+class TestUnregisterCommand:
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        os.environ['PROCYON_HOME'] = self.tmpdir
+
+    def teardown_method(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        os.environ.pop('PROCYON_HOME', None)
+
+    def test_unregister_success(self):
+        pid = os.getpid()
+        run_procyon('register', '--name', 'test_job',
+                    '--pid', str(pid), '--cmd', 'echo hello')
+        rc, out, err = run_procyon('unregister', '--name', 'test_job')
+        assert rc == 0
+        assert out["status"] == "unregistered"
+
+    def test_unregister_not_found(self):
+        rc, out, err = run_procyon('unregister', '--name', 'nonexistent')
+        assert rc != 0
+        assert out["code"] == "NOT_FOUND"

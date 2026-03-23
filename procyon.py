@@ -162,11 +162,39 @@ def pretty_table(rows, headers):
 # ---------------------------------------------------------------------------
 
 def cmd_register(args):
-    json_err("NOT_IMPLEMENTED", "register is not yet implemented")
+    ensure_dirs()
+    lock = read_lock(args.name, args.checkpoint_dir)
+    if lock is not None:
+        if pid_alive(lock["pid"]):
+            json_err("DUPLICATE_PROCESS",
+                     f"Process '{args.name}' already running (PID {lock['pid']}). "
+                     "Use 'procyon kill' or 'procyon unregister' first.")
+        else:
+            remove_lock(args.name, args.checkpoint_dir)
+    write_lock(args.name, args.pid, args.cmd, args.checkpoint_dir)
+    reg = load_registry()
+    reg["processes"][args.name] = {
+        "pid": args.pid,
+        "cmd": args.cmd,
+        "checkpoint_dir": args.checkpoint_dir,
+        "started": datetime.now().isoformat(),
+        "registered_by": "manual",
+        "done_marker": args.done_marker,
+    }
+    save_registry(reg)
+    json_out({"status": "registered", "name": args.name, "pid": args.pid})
 
 
 def cmd_unregister(args):
-    json_err("NOT_IMPLEMENTED", "unregister is not yet implemented")
+    ensure_dirs()
+    reg = load_registry()
+    if args.name not in reg["processes"]:
+        json_err("NOT_FOUND", f"Process '{args.name}' not found in registry.")
+    checkpoint_dir = reg["processes"][args.name].get("checkpoint_dir")
+    remove_lock(args.name, checkpoint_dir)
+    del reg["processes"][args.name]
+    save_registry(reg)
+    json_out({"status": "unregistered", "name": args.name})
 
 
 def cmd_status(args):
