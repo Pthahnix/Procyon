@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 import signal
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -286,8 +287,85 @@ def cmd_kill(args):
     json_out({"status": "killed", "name": args.name, "pid": pid})
 
 
+def daemonize():
+    """Double-fork daemonization."""
+    if os.fork() > 0:
+        sys.exit(0)  # first parent exits
+    os.setsid()
+    if os.fork() > 0:
+        sys.exit(0)  # second parent exits
+    # Redirect stdio to /dev/null
+    sys.stdin = open(os.devnull, 'r')
+    sys.stdout = open(os.devnull, 'w')
+    sys.stderr = open(os.devnull, 'w')
+
+
+def watchdog_loop(interval):
+    """Main watchdog loop — run as daemon."""
+    pid_file = _watchdog_pid()
+    pid_file.write_text(str(os.getpid()))
+
+    def handle_sigterm(signum, frame):
+        try:
+            pid_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, handle_sigterm)
+
+    while True:
+        try:
+            reg = load_registry()
+            for name, proc in list(reg["processes"].items()):
+                if not pid_alive(proc["pid"]):
+                    checkpoint_dir = proc.get("checkpoint_dir")
+                    done_marker = proc.get("done_marker", "checkpoint_final.pt")
+                    # Check if done marker exists (clean completion)
+                    if checkpoint_dir and Path(checkpoint_dir, done_marker).exists():
+                        # Auto-unregister: clean completion
+                        remove_lock(name, checkpoint_dir)
+                        del reg["processes"][name]
+                        save_registry(reg)
+                    else:
+                        # Auto-restart: crashed
+                        new_proc = subprocess.Popen(proc["cmd"], shell=True)
+                        reg["processes"][name]["pid"] = new_proc.pid
+                        reg["processes"][name]["started"] = datetime.now().isoformat()
+                        save_registry(reg)
+        except Exception:
+            pass  # watchdog must never crash
+        time.sleep(interval)
+
+
 def cmd_watch(args):
-    json_err("NOT_IMPLEMENTED", "watch is not yet implemented")
+    ensure_dirs()
+    pid_file = _watchdog_pid()
+
+    if args.stop:
+        if not pid_file.exists():
+            json_err("NOT_RUNNING", "Watchdog is not running.")
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, signal.SIGTERM)
+            json_out({"status": "stopped", "pid": pid})
+        except (ProcessLookupError, ValueError):
+            pid_file.unlink(missing_ok=True)
+            json_err("NOT_RUNNING", "Watchdog process not found.")
+
+    # Check if already running
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            if pid_alive(pid):
+                json_err("WATCHDOG_RUNNING", f"Watchdog already running (PID {pid}).")
+        except ValueError:
+            pass
+        pid_file.unlink(missing_ok=True)
+
+    # Daemonize and start loop
+    daemonize()
+    watchdog_loop(args.interval)
 
 
 def cmd_run(args):

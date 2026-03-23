@@ -1,5 +1,5 @@
 # tests/test_procyon.py
-import subprocess, json, sys, os, tempfile
+import subprocess, json, sys, os, tempfile, time, signal
 
 PROCYON = os.path.join(os.path.dirname(__file__), '..', 'procyon.py')
 
@@ -312,3 +312,114 @@ class TestKillCommand:
                 pass
             output = json.loads(mock_stdout.getvalue())
             assert output["code"] == "ALREADY_DEAD"
+
+
+class TestWatchCommand:
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        os.environ['PROCYON_HOME'] = self.tmpdir
+
+    def teardown_method(self):
+        # Kill any watchdog we spawned
+        pidfile = os.path.join(self.tmpdir, "watchdog.pid")
+        if os.path.exists(pidfile):
+            try:
+                pid = int(open(pidfile).read().strip())
+                os.kill(pid, signal.SIGTERM)
+                time.sleep(0.5)
+            except (ProcessLookupError, ValueError):
+                pass
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        os.environ.pop('PROCYON_HOME', None)
+
+    def test_watch_creates_pid_file(self):
+        proc = subprocess.Popen(
+            [sys.executable, PROCYON, 'watch', '--interval', '1'],
+            env={**os.environ, 'PROCYON_HOME': self.tmpdir}
+        )
+        time.sleep(1)
+        pidfile = os.path.join(self.tmpdir, "watchdog.pid")
+        assert os.path.exists(pidfile)
+        # Cleanup
+        pid = int(open(pidfile).read().strip())
+        os.kill(pid, signal.SIGTERM)
+
+    def test_watch_stop(self):
+        proc = subprocess.Popen(
+            [sys.executable, PROCYON, 'watch', '--interval', '1'],
+            env={**os.environ, 'PROCYON_HOME': self.tmpdir}
+        )
+        time.sleep(1)
+        rc, out, err = run_procyon('watch', '--stop')
+        assert rc == 0
+        time.sleep(0.5)
+        pidfile = os.path.join(self.tmpdir, "watchdog.pid")
+        # PID file should be cleaned up
+        if os.path.exists(pidfile):
+            from procyon import pid_alive
+            pid = int(open(pidfile).read().strip())
+            assert not pid_alive(pid)
+
+    def test_watch_refuses_if_already_running(self):
+        proc = subprocess.Popen(
+            [sys.executable, PROCYON, 'watch', '--interval', '1'],
+            env={**os.environ, 'PROCYON_HOME': self.tmpdir}
+        )
+        time.sleep(1)
+        rc, out, err = run_procyon('watch')
+        assert rc != 0
+        assert out["code"] == "WATCHDOG_RUNNING"
+        # Cleanup
+        run_procyon('watch', '--stop')
+
+    def test_watch_restarts_dead_process(self):
+        """Watchdog should restart a registered process whose PID is dead."""
+        from procyon import ensure_dirs, load_registry, save_registry
+        ensure_dirs()
+        # Register a dead PID with a command that creates a marker file
+        marker = os.path.join(self.tmpdir, "restarted.txt")
+        reg = load_registry()
+        reg["processes"]["dead_job"] = {
+            "pid": 999999999,
+            "cmd": f'{sys.executable} -c "open(\\"{marker}\\",\\"w\\").write(\\"ok\\")"',
+            "checkpoint_dir": None, "started": "2026-03-23T00:00:00",
+            "registered_by": "manual", "done_marker": "checkpoint_final.pt"
+        }
+        save_registry(reg)
+        # Start watchdog with short interval
+        proc = subprocess.Popen(
+            [sys.executable, PROCYON, 'watch', '--interval', '1'],
+            env={**os.environ, 'PROCYON_HOME': self.tmpdir}
+        )
+        time.sleep(3)  # wait for at least one watchdog cycle
+        # Verify the marker file was created (process was restarted)
+        assert os.path.exists(marker)
+        run_procyon('watch', '--stop')
+
+    def test_watch_skips_restart_when_done_marker_exists(self):
+        """Watchdog should NOT restart if done_marker exists in checkpoint_dir."""
+        from procyon import ensure_dirs, load_registry, save_registry
+        ensure_dirs()
+        ckpt = os.path.join(self.tmpdir, "ckpt_done")
+        os.makedirs(ckpt)
+        # Create the done marker
+        open(os.path.join(ckpt, "checkpoint_final.pt"), "w").close()
+        # Register a dead PID pointing to this checkpoint_dir
+        reg = load_registry()
+        reg["processes"]["done_job"] = {
+            "pid": 999999999,
+            "cmd": "echo should-not-run",
+            "checkpoint_dir": ckpt, "started": "2026-03-23T00:00:00",
+            "registered_by": "manual", "done_marker": "checkpoint_final.pt"
+        }
+        save_registry(reg)
+        proc = subprocess.Popen(
+            [sys.executable, PROCYON, 'watch', '--interval', '1'],
+            env={**os.environ, 'PROCYON_HOME': self.tmpdir}
+        )
+        time.sleep(3)
+        # Process should be auto-unregistered, not restarted
+        rc, out, err = run_procyon('status')
+        assert out == []  # unregistered
+        run_procyon('watch', '--stop')
