@@ -11,90 +11,124 @@ Born from a real incident: a rogue Claude Code agent spawned duplicate training 
 
 ---
 
+## Status: v0.1.0 — Deployed and Active
+
+- Location: `/home/pthahnix/Procyon/procyon.py`
+- Registry: `~/.procyon/registry.json`
+- 42 tests passing
+- Layer 1 (soft protection) active; Layer 2 (AppArmor) requires interactive `bash install.sh`
+
+---
+
+## How to Use (for Claude Code agents)
+
+**IMPORTANT: You have a skill file for this.** Before managing any training process, invoke:
+```
+skill: procyon-usage
+```
+
+Key rules:
+1. **ALWAYS** run `procyon status` before launching any training job
+2. **NEVER** use `kill`, `pkill`, or `killall` on training processes
+3. **ALWAYS** use `procyon run` wrapper mode for new jobs
+4. **NEVER** call `procyon kill` — it will reject you (no TTY)
+5. Use `procyon issue` to report bugs — do NOT modify `procyon.py` directly
+
+---
+
+## Usage Model
+
+Procyon is a **plain CLI tool** — no daemon required for basic use. Commands are instant:
+
+```bash
+# Check running jobs
+python3 ~/Procyon/procyon.py status --pretty
+
+# Launch protected training (recommended)
+python3 ~/Procyon/procyon.py run --name rvq_pca \
+  --checkpoint_dir /data/checkpoints/rvq_pca \
+  -- python3 scripts/train_rvq.py --epochs 15
+
+# File an issue
+python3 ~/Procyon/procyon.py issue --title "title" --body "details"
+```
+
+The watchdog (`procyon watch`) is optional — only needed for auto-restart on crash.
+
+---
+
 ## Design
 
 ### Core: `procyon.py` — single-file CLI tool
 
+All 7 subcommands:
 ```
-procyon register  --name <job_name> --pid <pid> --cmd "<full command>" [--checkpoint_dir <path>]
-procyon watch     # start background watchdog daemon
-procyon kill      --name <job_name>  # safe kill with confirmation
-procyon status    # list all registered processes and their health
-procyon unregister --name <job_name>  # remove from registry (on clean exit)
+procyon register   --name <name> --pid <pid> --cmd "<cmd>" [--checkpoint_dir <path>]
+procyon unregister --name <name>
+procyon status     [--pretty]
+procyon kill       --name <name>          # TTY only, refuses agents
+procyon watch      [--stop] [--interval N]
+procyon run        --name <name> -- <cmd> [args...]
+procyon issue      --title <t> --body <b> [--priority <p>] [--tag <t>]
 ```
 
 ### Layer A: Lock Files (anti-duplicate)
 
-Each registered job writes a lock file at `<checkpoint_dir>/procyon.lock` (or `~/.procyon/locks/<name>.lock` if no checkpoint_dir). Lock file contains:
-
-```json
-{"name": "rvq_full_pca", "pid": 3203377, "cmd": "python3 scripts/train_rvq.py ...", "started": "2026-03-21T19:25:00", "checkpoint_dir": "/data/.../checkpoints/rvq_full_pca"}
-```
-
-On `register`: check if lock exists → if yes, check if PID is alive → if alive, refuse with error. If dead (stale lock), clean up and proceed.
+Each registered job writes a lock file at `<checkpoint_dir>/procyon.lock` (or `~/.procyon/locks/<name>.lock`). On `register`/`run`: check if lock exists → if PID alive, refuse. If dead (stale), clean up and proceed.
 
 ### Layer B: Global Registry
 
-`~/.procyon/registry.json` — master list of all active jobs. `watch` reads this to know what to monitor.
+`~/.procyon/registry.json` — master list. Uses `fcntl.flock` for concurrency. `watch` reads this to know what to monitor.
 
 ### Watchdog (`watch`)
 
-- Runs as background daemon (`nohup procyon watch &`)
-- Polls registry every 30s
-- If a registered PID is dead: log the event + auto-restart using the saved `cmd` + update registry with new PID
-- Writes daemon log to `~/.procyon/watchdog.log`
-- Restart is skipped if `checkpoint_final.pt` exists in checkpoint_dir (clean completion, not a crash)
+- Double-fork daemon, survives terminal close
+- Polls registry every 30s (configurable via `--interval`)
+- Dead PID → auto-restart via saved `cmd`, OR auto-unregister if `done_marker` exists in checkpoint_dir (clean completion)
+- PID file at `~/.procyon/watchdog.pid`
 
 ### Safe Kill (`kill`)
 
-```
-$ procyon kill --name rvq_full_pca
-⚠  PROCYON SAFE KILL
-   Name:    rvq_full_pca
-   PID:     3203377
-   Running: 47h 32m (since 2026-03-21 19:25)
-   Status:  Epoch 7/15, last loss 0.2464
-   Cmd:     python3 scripts/train_rvq.py --checkpoint_dir ...
-
-   Type the job name to confirm kill, or Ctrl+C to abort: _
-```
-
-In non-interactive mode (e.g., called from a script/agent without a TTY): **refuse entirely** and print an error. This is the key protection against rogue agents.
+Checks TTY via `sys.stdin.isatty()`. If no TTY (script/agent context): **refuses entirely with NO_TTY error**. If TTY: displays job info and requires typing the job name to confirm.
 
 ---
 
 ## File Structure
 
 ```
-PROCYON/
-├── CLAUDE.md          # this file
-├── procyon.py         # single-file CLI (all logic here)
+Procyon/
+├── CLAUDE.md              # this file
+├── README.md              # user-facing docs
+├── procyon.py             # single-file CLI (all logic here)
+├── install.sh             # one-time AppArmor + directory setup
 ├── tests/
-│   └── test_procyon.py
-└── README.md
+│   └── test_procyon.py    # 42 tests
+├── skill/
+│   ├── procyon-usage.md   # CC daily usage SOP
+│   └── procyon-iterate.md # CC iteration/upgrade SOP
+├── issues/                # filed issues (procyon issue command)
+└── VERSION                # current version
 ```
-
-Keep it simple: one file, no dependencies beyond stdlib. No pip install required — just `python3 procyon.py`.
 
 ---
 
-## Integration with MeshLex (example)
-
-After implementation, MeshLex training scripts add two lines:
+## Integration with Training Scripts (2-line)
 
 ```python
 # At the top of train_rvq.py, after args are parsed:
-import subprocess
-subprocess.run(["python3", "/home/pthahnix/PROCYON/procyon.py", "register",
+import subprocess, os, sys
+subprocess.run(["python3", "/home/pthahnix/Procyon/procyon.py", "register",
                 "--name", f"rvq_{args.exp_name}",
                 "--pid", str(os.getpid()),
                 "--cmd", " ".join(sys.argv),
                 "--checkpoint_dir", args.checkpoint_dir], check=False)
 
 # At the very end (finally block):
-subprocess.run(["python3", "/home/pthahnix/PROCYON/procyon.py", "unregister",
+subprocess.run(["python3", "/home/pthahnix/Procyon/procyon.py", "unregister",
                 "--name", f"rvq_{args.exp_name}"], check=False)
 ```
+
+Preferred alternative: use `procyon run` wrapper instead of modifying scripts.
 
 ---
 
@@ -102,17 +136,17 @@ subprocess.run(["python3", "/home/pthahnix/PROCYON/procyon.py", "unregister",
 
 - **Python stdlib only** — no external dependencies
 - **Single file** — `procyon.py` contains everything
-- **Non-invasive** — integrates with existing scripts via 2-line additions, doesn't require rewriting them
-- **Fail-safe** — if procyon itself crashes or isn't running, the training job is unaffected
-- **Non-interactive TTY detection** — `kill` command must detect if it's called from a script (no TTY) and refuse
+- **Non-invasive** — integrates via 2-line additions, or use `run` wrapper
+- **Fail-safe** — if procyon crashes or isn't running, training job is unaffected
+- **Non-interactive TTY detection** — `kill` refuses if called from a script/agent
 
 ---
 
-## What to Build
+## Iteration
 
-1. Write `procyon.py` with all 5 subcommands (register, watch, kill, status, unregister)
-2. Write `tests/test_procyon.py` with unit tests for lock file logic, stale lock cleanup, TTY detection, registry CRUD
-3. Write `README.md` with usage examples
-4. Make `procyon.py` executable (`chmod +x`)
+To improve Procyon, invoke `skill: procyon-iterate`. This will:
+1. Read open issues in `issues/`
+2. Plan changes on a feature branch
+3. Run tests, create PR, wait for human approval before merging
 
-Start with TDD: write failing tests first, then implement.
+Do **not** modify `procyon.py` outside this workflow.
