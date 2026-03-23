@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 VERSION = "0.1.0"
@@ -29,14 +30,6 @@ def _watchdog_log():
 
 def _watchdog_pid():
     return _procyon_dir() / 'watchdog.pid'
-
-
-# Module-level aliases (kept for backward compatibility; prefer the functions above)
-PROCYON_DIR = _procyon_dir()
-REGISTRY_PATH = _procyon_dir() / 'registry.json'
-LOCKS_DIR = _procyon_dir() / 'locks'
-WATCHDOG_LOG = _procyon_dir() / 'watchdog.log'
-WATCHDOG_PID = _procyon_dir() / 'watchdog.pid'
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +75,53 @@ def pid_alive(pid):
     except PermissionError:
         # Process exists but is owned by another user
         return True
+
+
+# ---------------------------------------------------------------------------
+# Lock file primitives
+# ---------------------------------------------------------------------------
+
+def lock_path(name, checkpoint_dir):
+    """Return the Path where the lock file for *name* should live."""
+    if checkpoint_dir:
+        return Path(checkpoint_dir) / "procyon.lock"
+    return _locks_dir() / f"{name}.lock"
+
+
+def write_lock(name, pid, cmd, checkpoint_dir):
+    """Atomically write a lock file for the given job."""
+    path = lock_path(name, checkpoint_dir)
+    data = {
+        "name": name,
+        "pid": pid,
+        "cmd": cmd,
+        "started": datetime.now().isoformat(),
+        "checkpoint_dir": checkpoint_dir,
+    }
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2))
+    os.rename(tmp, path)
+
+
+def read_lock(name, checkpoint_dir):
+    """Read and return the lock file dict, or None if it doesn't exist."""
+    path = lock_path(name, checkpoint_dir)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text())
+
+
+def remove_lock(name, checkpoint_dir):
+    """Delete the lock file if it exists."""
+    lock_path(name, checkpoint_dir).unlink(missing_ok=True)
+
+
+def check_stale_lock(name, checkpoint_dir):
+    """Return True if lock exists with a dead PID, False if alive, None if no lock."""
+    lock = read_lock(name, checkpoint_dir)
+    if lock is None:
+        return None
+    return not pid_alive(lock["pid"])
 
 
 

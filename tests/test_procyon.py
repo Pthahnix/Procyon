@@ -73,3 +73,55 @@ class TestRegistry:
     def test_pid_alive_dead_process(self):
         from procyon import pid_alive
         assert pid_alive(999999999) is False
+
+
+class TestLockFiles:
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        os.environ['PROCYON_HOME'] = self.tmpdir
+
+    def teardown_method(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        os.environ.pop('PROCYON_HOME', None)
+
+    def test_write_and_read_lock_with_checkpoint_dir(self):
+        from procyon import write_lock, read_lock, ensure_dirs
+        ensure_dirs()
+        ckpt = os.path.join(self.tmpdir, "checkpoints")
+        os.makedirs(ckpt)
+        write_lock("test_job", 12345, "echo hi", ckpt)
+        lock = read_lock("test_job", ckpt)
+        assert lock["pid"] == 12345
+        assert lock["name"] == "test_job"
+        # Lock should be at checkpoint_dir/procyon.lock
+        assert os.path.exists(os.path.join(ckpt, "procyon.lock"))
+
+    def test_write_and_read_lock_without_checkpoint_dir(self):
+        from procyon import write_lock, read_lock, ensure_dirs
+        ensure_dirs()
+        write_lock("test_job", 12345, "echo hi", None)
+        lock = read_lock("test_job", None)
+        assert lock["pid"] == 12345
+
+    def test_remove_lock(self):
+        from procyon import write_lock, read_lock, remove_lock, ensure_dirs
+        ensure_dirs()
+        write_lock("test_job", 12345, "echo hi", None)
+        remove_lock("test_job", None)
+        lock = read_lock("test_job", None)
+        assert lock is None
+
+    def test_check_stale_lock_dead_pid(self):
+        from procyon import write_lock, check_stale_lock, ensure_dirs
+        ensure_dirs()
+        write_lock("test_job", 999999999, "echo hi", None)  # dead PID
+        is_stale = check_stale_lock("test_job", None)
+        assert is_stale is True
+
+    def test_check_stale_lock_alive_pid(self):
+        from procyon import write_lock, check_stale_lock, ensure_dirs
+        ensure_dirs()
+        write_lock("test_job", os.getpid(), "echo hi", None)  # alive PID
+        is_stale = check_stale_lock("test_job", None)
+        assert is_stale is False
