@@ -208,3 +208,47 @@ class TestUnregisterCommand:
         rc, out, err = run_procyon('unregister', '--name', 'nonexistent')
         assert rc != 0
         assert out["code"] == "NOT_FOUND"
+
+
+class TestStatusCommand:
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        os.environ['PROCYON_HOME'] = self.tmpdir
+
+    def teardown_method(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        os.environ.pop('PROCYON_HOME', None)
+
+    def test_status_empty(self):
+        rc, out, err = run_procyon('status')
+        assert rc == 0
+        assert out == []
+
+    def test_status_with_registered_process(self):
+        pid = os.getpid()
+        run_procyon('register', '--name', 'test_job',
+                    '--pid', str(pid), '--cmd', 'echo hello')
+        rc, out, err = run_procyon('status')
+        assert rc == 0
+        assert len(out) == 1
+        assert out[0]["name"] == "test_job"
+        assert out[0]["alive"] is True
+        assert out[0]["protected"] is True
+        assert "uptime_seconds" in out[0]
+
+    def test_status_detects_dead_process(self):
+        run_procyon('register', '--name', 'dead_job',
+                    '--pid', '999999999', '--cmd', 'echo hello')
+        rc, out, err = run_procyon('status')
+        assert rc == 0
+        assert out[0]["alive"] is False
+
+    def test_status_pretty_is_string(self):
+        pid = os.getpid()
+        run_procyon('register', '--name', 'test_job',
+                    '--pid', str(pid), '--cmd', 'echo hello')
+        rc, out, err = run_procyon('status', '--pretty')
+        assert rc == 0
+        assert isinstance(out, str)
+        assert "test_job" in out

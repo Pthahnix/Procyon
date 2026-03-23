@@ -198,10 +198,38 @@ def cmd_unregister(args):
 
 
 def cmd_status(args):
-    if args.pretty:
-        print("")
+    ensure_dirs()
+    reg = load_registry()
+    entries = []
+    now = datetime.now()
+    for name, proc in reg["processes"].items():
+        alive = pid_alive(proc["pid"])
+        started = proc.get("started")
+        try:
+            started_dt = datetime.fromisoformat(started)
+            uptime_seconds = int((now - started_dt).total_seconds())
+        except (TypeError, ValueError):
+            uptime_seconds = 0
+        entries.append({
+            "name": name,
+            "pid": proc["pid"],
+            "cmd": proc["cmd"],
+            "checkpoint_dir": proc.get("checkpoint_dir"),
+            "started": started,
+            "uptime_seconds": uptime_seconds,
+            "alive": alive,
+            "protected": True,
+        })
+    if getattr(args, 'pretty', False):
+        if not entries:
+            print("No registered processes.")
+        else:
+            headers = ["name", "pid", "alive", "uptime_seconds", "cmd"]
+            rows = [{h: str(e[h]) for h in headers} for e in entries]
+            print(pretty_table(rows, headers))
         sys.exit(0)
-    json_out([])
+    else:
+        json_out(entries)
 
 
 def cmd_kill(args):
