@@ -470,8 +470,9 @@ def cmd_issue(args):
 
     issues_dir.mkdir(parents=True, exist_ok=True)
 
-    # Count existing .md files → next number
-    existing = sorted([f for f in issues_dir.iterdir() if f.suffix == '.md'])
+    # Count existing issue .md files → next number (exclude TODO.md)
+    existing = sorted([f for f in issues_dir.iterdir()
+                       if f.suffix == '.md' and f.name != 'TODO.md'])
     next_num = len(existing) + 1
 
     # Slugify title
@@ -495,6 +496,24 @@ status: open
 {args.body}
 """
     filepath.write_text(content)
+
+    # Auto-append entry to TODO.md
+    todo_path = issues_dir / 'TODO.md'
+    todo_entry = f"- [ ] [#{next_num:03d} {args.title}]({filename})\n"
+    if todo_path.exists():
+        with open(todo_path, 'a') as f:
+            f.write(todo_entry)
+    else:
+        # Create TODO.md with header + first entry
+        todo_header = (
+            "# Procyon — Open Issues Tracker\n\n"
+            "> Auto-maintained by `procyon issue`. Each new issue is appended "
+            "here as an unchecked item.\n"
+            "> Resolved issues are checked off (`- [x]`) during the iterate "
+            "workflow.\n\n"
+        )
+        with open(todo_path, 'w') as f:
+            f.write(todo_header + todo_entry)
 
     # Return relative path if possible
     try:

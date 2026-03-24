@@ -505,21 +505,31 @@ class TestIssueCommand:
         assert "path" in out
         # Verify file exists and has frontmatter
         files = os.listdir(self.issues_dir)
-        md_files = [f for f in files if f.endswith('.md')]
+        md_files = [f for f in files if f.endswith('.md') and f != 'TODO.md']
         assert len(md_files) == 1
         content = open(os.path.join(self.issues_dir, md_files[0])).read()
         assert "title: Test bug" in content
         assert "status: open" in content
         assert "Something is broken" in content
+        # Verify TODO.md was auto-created with entry
+        todo_path = os.path.join(self.issues_dir, 'TODO.md')
+        assert os.path.exists(todo_path)
+        todo_content = open(todo_path).read()
+        assert "- [ ]" in todo_content
+        assert "Test bug" in todo_content
 
     def test_issue_sequential_numbering(self):
         run_procyon('issue', '--title', 'First', '--body', 'body1')
         run_procyon('issue', '--title', 'Second', '--body', 'body2')
         files = sorted(os.listdir(self.issues_dir))
-        md_files = [f for f in files if f.endswith('.md')]
+        md_files = [f for f in files if f.endswith('.md') and f != 'TODO.md']
         assert len(md_files) == 2
         assert '_001_' in md_files[0]
         assert '_002_' in md_files[1]
+        # Verify TODO.md has both entries
+        todo_content = open(os.path.join(self.issues_dir, 'TODO.md')).read()
+        assert "#001" in todo_content
+        assert "#002" in todo_content
 
     def test_issue_with_priority_and_tag(self):
         rc, out, err = run_procyon('issue', '--title', 'Urgent',
@@ -527,7 +537,7 @@ class TestIssueCommand:
                                    '--priority', 'high', '--tag', 'feature')
         assert rc == 0
         files = os.listdir(self.issues_dir)
-        md_files = [f for f in files if f.endswith('.md')]
+        md_files = [f for f in files if f.endswith('.md') and f != 'TODO.md']
         content = open(os.path.join(self.issues_dir, md_files[0])).read()
         assert "priority: high" in content
         assert "tag: feature" in content

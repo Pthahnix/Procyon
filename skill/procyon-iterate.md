@@ -33,14 +33,12 @@ Skipping steps 2 or 3 is FORBIDDEN. You may NOT jump from reading issues directl
 
 ### Phase 1: Discover
 
-#### 1.1 Read Open Issues
-```bash
-grep -l "status: open" issues/*.md
-```
-Read each open issue file to understand what needs to change.
+#### 1.1 Read TODO Tracker
+Read `issues/TODO.md`. Unchecked items (`- [ ]`) are the open issues to address.
+Follow each link to read the full issue file and understand what needs to change.
 
 #### 1.2 Present Issues to Human
-Summarize all open issues. Ask the human which issues to address in this iteration (all, or a subset). Wait for confirmation before proceeding.
+Summarize all unchecked issues from TODO.md. Ask the human which issues to address in this iteration (all, or a subset). Wait for confirmation before proceeding.
 
 ### Phase 2: Design (MANDATORY)
 
@@ -137,7 +135,9 @@ git push && git push --tags
 ```
 
 #### 4.5 Close Issues
-Edit each resolved issue file: change `status: open` to `status: resolved`.
+For each resolved issue:
+1. Edit the issue file: change `status: open` to `status: resolved`
+2. Edit `issues/TODO.md`: change `- [ ]` to `- [x]` for each resolved item
 Commit and push.
 
 #### 4.6 Deploy
