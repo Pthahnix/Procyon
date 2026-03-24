@@ -14,7 +14,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 # Path constants — check PROCYON_HOME for test isolation
 def _procyon_dir():

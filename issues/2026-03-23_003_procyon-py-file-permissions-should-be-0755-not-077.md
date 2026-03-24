@@ -4,7 +4,7 @@ priority: low
 tag: improvement
 date: 2026-03-23T07:15:25.035842
 author: claude-code
-status: open
+status: resolved
 ---
 
 procyon.py is currently 0775 (group-writable). Should be chmod 755 to prevent group members from modifying the guardian.

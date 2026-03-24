@@ -4,7 +4,7 @@ priority: normal
 tag: bug
 date: 2026-03-24T04:30:08.910721
 author: claude-code
-status: open
+status: resolved
 ---
 
 ## Problem
