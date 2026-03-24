@@ -339,6 +339,7 @@ def watchdog_loop(interval):
                         reg["processes"][name]["pid"] = new_proc.pid
                         reg["processes"][name]["started"] = datetime.now().isoformat()
                         save_registry(reg)
+                        write_lock(name, new_proc.pid, proc["cmd"], checkpoint_dir)
         except Exception:
             pass  # watchdog must never crash
         time.sleep(interval)

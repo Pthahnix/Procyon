@@ -630,3 +630,59 @@ class TestE2E:
                                    '--priority', 'low', '--tag', 'improvement')
         assert rc == 0
         assert out["status"] == "created"
+
+
+class TestWatchdogLockUpdate:
+    """Issue #002: watchdog must update lock file PID after auto-restart."""
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        os.environ['PROCYON_HOME'] = self.tmpdir
+
+    def teardown_method(self):
+        # Kill any watchdog we spawned
+        pidfile = os.path.join(self.tmpdir, "watchdog.pid")
+        if os.path.exists(pidfile):
+            try:
+                pid = int(open(pidfile).read().strip())
+                os.kill(pid, signal.SIGTERM)
+                time.sleep(0.5)
+            except (ProcessLookupError, ValueError):
+                pass
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        os.environ.pop('PROCYON_HOME', None)
+
+    def test_watchdog_restart_updates_lock_file(self):
+        """After auto-restart, lock file PID should match the new process PID."""
+        from procyon import ensure_dirs, load_registry, save_registry, read_lock
+        ensure_dirs()
+        # Register a dead PID with a command that sleeps (so it stays alive after restart)
+        reg = load_registry()
+        reg["processes"]["lock_test"] = {
+            "pid": 999999999,
+            "cmd": f'{sys.executable} -c "import time; time.sleep(60)"',
+            "checkpoint_dir": None, "started": "2026-03-23T00:00:00",
+            "registered_by": "manual", "done_marker": "checkpoint_final.pt"
+        }
+        save_registry(reg)
+        # Start watchdog with short interval
+        proc = subprocess.Popen(
+            [sys.executable, PROCYON, 'watch', '--interval', '1'],
+            env={**os.environ, 'PROCYON_HOME': self.tmpdir}
+        )
+        time.sleep(3)  # wait for at least one watchdog cycle
+        # Read the registry to get the new PID
+        reg2 = load_registry()
+        assert "lock_test" in reg2["processes"]
+        new_pid = reg2["processes"]["lock_test"]["pid"]
+        assert new_pid != 999999999  # should be different (restarted)
+        # Read the lock file — its PID should match the registry PID
+        lock = read_lock("lock_test", None)
+        assert lock is not None, "Lock file should exist after restart"
+        assert lock["pid"] == new_pid, f"Lock file PID {lock['pid']} != registry PID {new_pid}"
+        # Cleanup: kill the restarted process and watchdog
+        try:
+            os.kill(new_pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        run_procyon('watch', '--stop')
