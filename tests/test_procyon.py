@@ -74,6 +74,25 @@ class TestRegistry:
         from procyon import pid_alive
         assert pid_alive(999999999) is False
 
+    def test_save_registry_uses_fd_based_locking(self):
+        """Verify save_registry uses os.open (not open('w')) to avoid TOCTOU."""
+        import inspect
+        from procyon import save_registry, load_registry, ensure_dirs
+        # Source inspection: must use os.open, not open('w')
+        source = inspect.getsource(save_registry)
+        assert "os.open" in source, "save_registry should use os.open, not open('w')"
+        assert "ftruncate" in source, "save_registry should use ftruncate after locking"
+        # Functional roundtrip test
+        ensure_dirs()
+        reg = {"processes": {"job_a": {"pid": 111, "cmd": "echo a"}}, "version": "0.1.0"}
+        save_registry(reg)
+        reg2 = {"processes": {"job_b": {"pid": 222, "cmd": "echo b"}}, "version": "0.1.0"}
+        save_registry(reg2)
+        loaded = load_registry()
+        assert "job_b" in loaded["processes"]
+        assert "job_a" not in loaded["processes"]
+        assert loaded["processes"]["job_b"]["pid"] == 222
+
 
 class TestLockFiles:
     def setup_method(self):

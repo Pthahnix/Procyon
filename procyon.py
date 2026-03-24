@@ -63,10 +63,15 @@ def load_registry():
 
 def save_registry(reg):
     """Write registry dict to disk, acquiring an exclusive (write) lock."""
-    with open(_registry_path(), 'w') as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
-        f.write(json.dumps(reg, indent=2))
-        # lock released when file is closed
+    path = _registry_path()
+    fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, json.dumps(reg, indent=2).encode())
+    finally:
+        os.close(fd)
 
 
 def pid_alive(pid):
