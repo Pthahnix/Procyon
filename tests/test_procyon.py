@@ -686,3 +686,46 @@ class TestWatchdogLockUpdate:
         except ProcessLookupError:
             pass
         run_procyon('watch', '--stop')
+
+
+class TestDaemonizeFdCleanup:
+    """Issue #004: daemonize should close inherited fds 3+."""
+
+    def test_closerange_closes_inherited_fds(self):
+        """Verify os.closerange closes fds 3+ (tests the pattern, not the fork).
+
+        IMPORTANT: This test runs os.closerange in a subprocess to avoid
+        closing pytest's own file descriptors."""
+        import resource
+        # Run in subprocess to protect pytest's fds
+        script = '''
+import os, resource, errno
+r, w = os.pipe()
+assert r >= 3
+maxfd = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
+if maxfd == resource.RLIM_INFINITY:
+    maxfd = 1024
+os.closerange(3, maxfd)
+try:
+    os.fstat(r)
+    print("FAIL: fd should be closed")
+    exit(1)
+except OSError as e:
+    if e.errno == errno.EBADF:
+        print("OK")
+    else:
+        print(f"FAIL: unexpected error {e}")
+        exit(1)
+'''
+        result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True)
+        assert result.returncode == 0, f"subprocess failed: {result.stderr}"
+        assert "OK" in result.stdout
+
+    def test_daemonize_contains_closerange(self):
+        """Verify daemonize() source contains os.closerange call."""
+        import inspect
+        from procyon import daemonize
+        source = inspect.getsource(daemonize)
+        assert "os.closerange" in source, "daemonize() should call os.closerange"
+        assert "resource.getrlimit" in source or "RLIMIT_NOFILE" in source, \
+            "daemonize() should use resource.getrlimit for max fd"

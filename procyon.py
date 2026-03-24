@@ -6,6 +6,7 @@ import ctypes
 import fcntl
 import json
 import os
+import resource
 import signal
 import subprocess
 import sys
@@ -300,6 +301,11 @@ def daemonize():
     os.setsid()
     if os.fork() > 0:
         sys.exit(0)  # second parent exits
+    # Close all inherited file descriptors (3+)
+    maxfd = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
+    if maxfd == resource.RLIM_INFINITY:
+        maxfd = 1024
+    os.closerange(3, maxfd)
     # Redirect stdio to /dev/null
     sys.stdin = open(os.devnull, 'r')
     sys.stdout = open(os.devnull, 'w')
