@@ -1,6 +1,8 @@
 # Claude Code
 .claude/
 .mcp.json
+CLAUDE.md
+docs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
