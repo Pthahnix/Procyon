@@ -74,6 +74,25 @@ class TestRegistry:
         from procyon import pid_alive
         assert pid_alive(999999999) is False
 
+    def test_save_registry_uses_fd_based_locking(self):
+        """Verify save_registry uses os.open (not open('w')) to avoid TOCTOU."""
+        import inspect
+        from procyon import save_registry, load_registry, ensure_dirs
+        # Source inspection: must use os.open, not open('w')
+        source = inspect.getsource(save_registry)
+        assert "os.open" in source, "save_registry should use os.open, not open('w')"
+        assert "ftruncate" in source, "save_registry should use ftruncate after locking"
+        # Functional roundtrip test
+        ensure_dirs()
+        reg = {"processes": {"job_a": {"pid": 111, "cmd": "echo a"}}, "version": "0.1.0"}
+        save_registry(reg)
+        reg2 = {"processes": {"job_b": {"pid": 222, "cmd": "echo b"}}, "version": "0.1.0"}
+        save_registry(reg2)
+        loaded = load_registry()
+        assert "job_b" in loaded["processes"]
+        assert "job_a" not in loaded["processes"]
+        assert loaded["processes"]["job_b"]["pid"] == 222
+
 
 class TestLockFiles:
     def setup_method(self):
@@ -611,3 +630,160 @@ class TestE2E:
                                    '--priority', 'low', '--tag', 'improvement')
         assert rc == 0
         assert out["status"] == "created"
+
+
+class TestWatchdogLockUpdate:
+    """Issue #002: watchdog must update lock file PID after auto-restart."""
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        os.environ['PROCYON_HOME'] = self.tmpdir
+
+    def teardown_method(self):
+        # Kill any watchdog we spawned
+        pidfile = os.path.join(self.tmpdir, "watchdog.pid")
+        if os.path.exists(pidfile):
+            try:
+                pid = int(open(pidfile).read().strip())
+                os.kill(pid, signal.SIGTERM)
+                time.sleep(0.5)
+            except (ProcessLookupError, ValueError):
+                pass
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        os.environ.pop('PROCYON_HOME', None)
+
+    def test_watchdog_restart_updates_lock_file(self):
+        """After auto-restart, lock file PID should match the new process PID."""
+        from procyon import ensure_dirs, load_registry, save_registry, read_lock
+        ensure_dirs()
+        # Register a dead PID with a command that sleeps (so it stays alive after restart)
+        reg = load_registry()
+        reg["processes"]["lock_test"] = {
+            "pid": 999999999,
+            "cmd": f'{sys.executable} -c "import time; time.sleep(60)"',
+            "checkpoint_dir": None, "started": "2026-03-23T00:00:00",
+            "registered_by": "manual", "done_marker": "checkpoint_final.pt"
+        }
+        save_registry(reg)
+        # Start watchdog with short interval
+        proc = subprocess.Popen(
+            [sys.executable, PROCYON, 'watch', '--interval', '1'],
+            env={**os.environ, 'PROCYON_HOME': self.tmpdir}
+        )
+        time.sleep(3)  # wait for at least one watchdog cycle
+        # Read the registry to get the new PID
+        reg2 = load_registry()
+        assert "lock_test" in reg2["processes"]
+        new_pid = reg2["processes"]["lock_test"]["pid"]
+        assert new_pid != 999999999  # should be different (restarted)
+        # Read the lock file — its PID should match the registry PID
+        lock = read_lock("lock_test", None)
+        assert lock is not None, "Lock file should exist after restart"
+        assert lock["pid"] == new_pid, f"Lock file PID {lock['pid']} != registry PID {new_pid}"
+        # Cleanup: kill the restarted process and watchdog
+        try:
+            os.kill(new_pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        run_procyon('watch', '--stop')
+
+
+class TestDaemonizeFdCleanup:
+    """Issue #004: daemonize should close inherited fds 3+."""
+
+    def test_closerange_closes_inherited_fds(self):
+        """Verify os.closerange closes fds 3+ (tests the pattern, not the fork).
+
+        IMPORTANT: This test runs os.closerange in a subprocess to avoid
+        closing pytest's own file descriptors."""
+        import resource
+        # Run in subprocess to protect pytest's fds
+        script = '''
+import os, resource, errno
+r, w = os.pipe()
+assert r >= 3
+maxfd = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
+if maxfd == resource.RLIM_INFINITY:
+    maxfd = 1024
+os.closerange(3, maxfd)
+try:
+    os.fstat(r)
+    print("FAIL: fd should be closed")
+    exit(1)
+except OSError as e:
+    if e.errno == errno.EBADF:
+        print("OK")
+    else:
+        print(f"FAIL: unexpected error {e}")
+        exit(1)
+'''
+        result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True)
+        assert result.returncode == 0, f"subprocess failed: {result.stderr}"
+        assert "OK" in result.stdout
+
+    def test_daemonize_contains_closerange(self):
+        """Verify daemonize() source contains os.closerange call."""
+        import inspect
+        from procyon import daemonize
+        source = inspect.getsource(daemonize)
+        assert "os.closerange" in source, "daemonize() should call os.closerange"
+        assert "resource.getrlimit" in source or "RLIMIT_NOFILE" in source, \
+            "daemonize() should use resource.getrlimit for max fd"
+
+
+class TestKillYesFlag:
+    """Issue #005: --yes flag should bypass TTY check and confirmation."""
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        os.environ['PROCYON_HOME'] = self.tmpdir
+
+    def teardown_method(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        os.environ.pop('PROCYON_HOME', None)
+
+    def test_kill_yes_bypasses_tty_check(self):
+        """With --yes, kill should work even without a TTY."""
+        # Start a background process to kill
+        proc = subprocess.Popen(
+            [sys.executable, '-c', 'import time; time.sleep(60)']
+        )
+        try:
+            pid = proc.pid
+            # Register it
+            run_procyon('register', '--name', 'yes_test',
+                        '--pid', str(pid), '--cmd', 'sleep 60')
+            # Kill with --yes (no TTY in subprocess)
+            rc, out, err = run_procyon('kill', '--name', 'yes_test', '--yes')
+            assert rc == 0
+            assert out["status"] == "killed"
+            assert out["name"] == "yes_test"
+        finally:
+            try:
+                proc.kill()
+                proc.wait()
+            except Exception:
+                pass
+
+    def test_kill_without_yes_still_requires_tty(self):
+        """Without --yes, kill should still refuse in non-TTY context."""
+        pid = os.getpid()
+        run_procyon('register', '--name', 'tty_test',
+                    '--pid', str(pid), '--cmd', 'echo hi')
+        rc, out, err = run_procyon('kill', '--name', 'tty_test')
+        assert rc != 0
+        assert out["code"] == "NO_TTY"
+
+    def test_kill_yes_not_found(self):
+        """--yes should not bypass NOT_FOUND check."""
+        rc, out, err = run_procyon('kill', '--name', 'nonexistent', '--yes')
+        assert rc != 0
+        assert out["code"] == "NOT_FOUND"
+
+    def test_kill_yes_already_dead(self):
+        """--yes should not bypass ALREADY_DEAD check."""
+        run_procyon('register', '--name', 'dead_yes',
+                    '--pid', '999999999', '--cmd', 'echo hi')
+        rc, out, err = run_procyon('kill', '--name', 'dead_yes', '--yes')
+        assert rc != 0
+        assert out["code"] == "ALREADY_DEAD"

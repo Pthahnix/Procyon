@@ -6,6 +6,7 @@ import ctypes
 import fcntl
 import json
 import os
+import resource
 import signal
 import subprocess
 import sys
@@ -63,10 +64,15 @@ def load_registry():
 
 def save_registry(reg):
     """Write registry dict to disk, acquiring an exclusive (write) lock."""
-    with open(_registry_path(), 'w') as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
-        f.write(json.dumps(reg, indent=2))
-        # lock released when file is closed
+    path = _registry_path()
+    fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, json.dumps(reg, indent=2).encode())
+    finally:
+        os.close(fd)
 
 
 def pid_alive(pid):
@@ -239,15 +245,15 @@ def cmd_status(args):
 def cmd_kill(args):
     ensure_dirs()
     reg = load_registry()
-    # 1. NOT_FOUND check
+    # 1. NOT_FOUND check (always runs)
     if args.name not in reg["processes"]:
         json_err("NOT_FOUND", f"Process '{args.name}' not found in registry.")
-    # 2. TTY check (MUST come before ALREADY_DEAD per spec)
-    if not sys.stdin.isatty():
+    # 2. TTY check — skip when --yes is passed
+    if not getattr(args, 'yes', False) and not sys.stdin.isatty():
         json_err("NO_TTY", "Kill requires an interactive terminal. Refusing non-interactive kill to protect against rogue agents.")
     proc = reg["processes"][args.name]
     pid = proc["pid"]
-    # 3. ALREADY_DEAD check
+    # 3. ALREADY_DEAD check (always runs)
     if not pid_alive(pid):
         json_err("ALREADY_DEAD", f"Process '{args.name}' (PID {pid}) is no longer alive. Use 'procyon unregister' to clean up.")
     # 4. Compute uptime for display
@@ -258,20 +264,21 @@ def cmd_kill(args):
         uptime_str = f"{h}h {m}m"
     except Exception:
         uptime_str = "unknown"
-    # 5. Display summary and prompt
-    print(f"\n  PROCYON SAFE KILL")
-    print(f"   Name:    {args.name}")
-    print(f"   PID:     {pid}")
-    print(f"   Running: {uptime_str}")
-    print(f"   Cmd:     {proc['cmd']}\n")
-    try:
-        confirm = input(f"   Type the job name to confirm kill, or Ctrl+C to abort: ").strip()
-    except (KeyboardInterrupt, EOFError):
-        print("\nAborted.")
-        sys.exit(0)
-    if confirm != args.name:
-        print(f"   Confirmation mismatch. Aborting.")
-        sys.exit(0)
+    # 5. Confirmation prompt — skip when --yes is passed
+    if not getattr(args, 'yes', False):
+        print(f"\n  PROCYON SAFE KILL")
+        print(f"   Name:    {args.name}")
+        print(f"   PID:     {pid}")
+        print(f"   Running: {uptime_str}")
+        print(f"   Cmd:     {proc['cmd']}\n")
+        try:
+            confirm = input(f"   Type the job name to confirm kill, or Ctrl+C to abort: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\nAborted.")
+            sys.exit(0)
+        if confirm != args.name:
+            print(f"   Confirmation mismatch. Aborting.")
+            sys.exit(0)
     # 6. Kill: SIGTERM first, then SIGKILL if needed
     # Remove from registry first
     checkpoint_dir = proc.get("checkpoint_dir")
@@ -295,6 +302,11 @@ def daemonize():
     os.setsid()
     if os.fork() > 0:
         sys.exit(0)  # second parent exits
+    # Close all inherited file descriptors (3+)
+    maxfd = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
+    if maxfd == resource.RLIM_INFINITY:
+        maxfd = 1024
+    os.closerange(3, maxfd)
     # Redirect stdio to /dev/null
     sys.stdin = open(os.devnull, 'r')
     sys.stdout = open(os.devnull, 'w')
@@ -334,6 +346,7 @@ def watchdog_loop(interval):
                         reg["processes"][name]["pid"] = new_proc.pid
                         reg["processes"][name]["started"] = datetime.now().isoformat()
                         save_registry(reg)
+                        write_lock(name, new_proc.pid, proc["cmd"], checkpoint_dir)
         except Exception:
             pass  # watchdog must never crash
         time.sleep(interval)
@@ -557,6 +570,8 @@ def build_parser():
     # kill
     p_kill = subparsers.add_parser('kill', help='Safely kill a registered process')
     p_kill.add_argument('--name', required=True, help='Job name')
+    p_kill.add_argument('--yes', action='store_true',
+                        help='Skip TTY check and confirmation (for non-interactive use)')
 
     # watch
     p_watch = subparsers.add_parser('watch', help='Start/stop the watchdog daemon')
