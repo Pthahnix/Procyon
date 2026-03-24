@@ -729,3 +729,61 @@ except OSError as e:
         assert "os.closerange" in source, "daemonize() should call os.closerange"
         assert "resource.getrlimit" in source or "RLIMIT_NOFILE" in source, \
             "daemonize() should use resource.getrlimit for max fd"
+
+
+class TestKillYesFlag:
+    """Issue #005: --yes flag should bypass TTY check and confirmation."""
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        os.environ['PROCYON_HOME'] = self.tmpdir
+
+    def teardown_method(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        os.environ.pop('PROCYON_HOME', None)
+
+    def test_kill_yes_bypasses_tty_check(self):
+        """With --yes, kill should work even without a TTY."""
+        # Start a background process to kill
+        proc = subprocess.Popen(
+            [sys.executable, '-c', 'import time; time.sleep(60)']
+        )
+        try:
+            pid = proc.pid
+            # Register it
+            run_procyon('register', '--name', 'yes_test',
+                        '--pid', str(pid), '--cmd', 'sleep 60')
+            # Kill with --yes (no TTY in subprocess)
+            rc, out, err = run_procyon('kill', '--name', 'yes_test', '--yes')
+            assert rc == 0
+            assert out["status"] == "killed"
+            assert out["name"] == "yes_test"
+        finally:
+            try:
+                proc.kill()
+                proc.wait()
+            except Exception:
+                pass
+
+    def test_kill_without_yes_still_requires_tty(self):
+        """Without --yes, kill should still refuse in non-TTY context."""
+        pid = os.getpid()
+        run_procyon('register', '--name', 'tty_test',
+                    '--pid', str(pid), '--cmd', 'echo hi')
+        rc, out, err = run_procyon('kill', '--name', 'tty_test')
+        assert rc != 0
+        assert out["code"] == "NO_TTY"
+
+    def test_kill_yes_not_found(self):
+        """--yes should not bypass NOT_FOUND check."""
+        rc, out, err = run_procyon('kill', '--name', 'nonexistent', '--yes')
+        assert rc != 0
+        assert out["code"] == "NOT_FOUND"
+
+    def test_kill_yes_already_dead(self):
+        """--yes should not bypass ALREADY_DEAD check."""
+        run_procyon('register', '--name', 'dead_yes',
+                    '--pid', '999999999', '--cmd', 'echo hi')
+        rc, out, err = run_procyon('kill', '--name', 'dead_yes', '--yes')
+        assert rc != 0
+        assert out["code"] == "ALREADY_DEAD"

@@ -245,15 +245,15 @@ def cmd_status(args):
 def cmd_kill(args):
     ensure_dirs()
     reg = load_registry()
-    # 1. NOT_FOUND check
+    # 1. NOT_FOUND check (always runs)
     if args.name not in reg["processes"]:
         json_err("NOT_FOUND", f"Process '{args.name}' not found in registry.")
-    # 2. TTY check (MUST come before ALREADY_DEAD per spec)
-    if not sys.stdin.isatty():
+    # 2. TTY check — skip when --yes is passed
+    if not getattr(args, 'yes', False) and not sys.stdin.isatty():
         json_err("NO_TTY", "Kill requires an interactive terminal. Refusing non-interactive kill to protect against rogue agents.")
     proc = reg["processes"][args.name]
     pid = proc["pid"]
-    # 3. ALREADY_DEAD check
+    # 3. ALREADY_DEAD check (always runs)
     if not pid_alive(pid):
         json_err("ALREADY_DEAD", f"Process '{args.name}' (PID {pid}) is no longer alive. Use 'procyon unregister' to clean up.")
     # 4. Compute uptime for display
@@ -264,20 +264,21 @@ def cmd_kill(args):
         uptime_str = f"{h}h {m}m"
     except Exception:
         uptime_str = "unknown"
-    # 5. Display summary and prompt
-    print(f"\n  PROCYON SAFE KILL")
-    print(f"   Name:    {args.name}")
-    print(f"   PID:     {pid}")
-    print(f"   Running: {uptime_str}")
-    print(f"   Cmd:     {proc['cmd']}\n")
-    try:
-        confirm = input(f"   Type the job name to confirm kill, or Ctrl+C to abort: ").strip()
-    except (KeyboardInterrupt, EOFError):
-        print("\nAborted.")
-        sys.exit(0)
-    if confirm != args.name:
-        print(f"   Confirmation mismatch. Aborting.")
-        sys.exit(0)
+    # 5. Confirmation prompt — skip when --yes is passed
+    if not getattr(args, 'yes', False):
+        print(f"\n  PROCYON SAFE KILL")
+        print(f"   Name:    {args.name}")
+        print(f"   PID:     {pid}")
+        print(f"   Running: {uptime_str}")
+        print(f"   Cmd:     {proc['cmd']}\n")
+        try:
+            confirm = input(f"   Type the job name to confirm kill, or Ctrl+C to abort: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\nAborted.")
+            sys.exit(0)
+        if confirm != args.name:
+            print(f"   Confirmation mismatch. Aborting.")
+            sys.exit(0)
     # 6. Kill: SIGTERM first, then SIGKILL if needed
     # Remove from registry first
     checkpoint_dir = proc.get("checkpoint_dir")
@@ -569,6 +570,8 @@ def build_parser():
     # kill
     p_kill = subparsers.add_parser('kill', help='Safely kill a registered process')
     p_kill.add_argument('--name', required=True, help='Job name')
+    p_kill.add_argument('--yes', action='store_true',
+                        help='Skip TTY check and confirmation (for non-interactive use)')
 
     # watch
     p_watch = subparsers.add_parser('watch', help='Start/stop the watchdog daemon')
