@@ -986,3 +986,146 @@ class TestGpuCommand:
 
         assert "=== GPU Overview ===" in output
         assert "No GPU processes running." in output
+
+    def test_gpu_subcommand_exists(self):
+        """procyon gpu should be a recognized subcommand."""
+        rc, out, err = run_procyon('gpu')
+        # Should not fail with "invalid choice" — may return empty JSON
+        assert rc == 0 or "invalid choice" not in err
+
+    def test_gpu_args_parsing(self):
+        """--user and --pretty flags should parse without error."""
+        from procyon import build_parser
+        parser = build_parser()
+        args = parser.parse_args(['gpu', '--user', 'pthahnix', '--pretty'])
+        assert args.command == 'gpu'
+        assert args.user == 'pthahnix'
+        assert args.pretty is True
+
+    def test_gpu_json_output_structure(self):
+        """Full cmd_gpu flow with mocked nvidia-smi and ps."""
+        from unittest.mock import patch, MagicMock, call
+        from procyon import cmd_gpu, ensure_dirs, save_registry
+        import io
+
+        ensure_dirs()
+        # Save a registry entry for PID 1001
+        save_registry({
+            "processes": {
+                "nurglings-01": {"pid": 1001, "cmd": "train.py",
+                                 "checkpoint_dir": None, "started": "2026-03-29T00:00:00",
+                                 "registered_by": "run", "done_marker": "checkpoint_final.pt"},
+            },
+            "version": "0.2.0"
+        })
+
+        gpu_info_result = MagicMock()
+        gpu_info_result.returncode = 0
+        gpu_info_result.stdout = "0, RTX 3090, 24576 MiB, 8192 MiB, 16384 MiB, 45 %, 62, GPU-uuid-0000\n"
+
+        compute_apps_result = MagicMock()
+        compute_apps_result.returncode = 0
+        compute_apps_result.stdout = "1001, GPU-uuid-0000, 4096 MiB\n"
+
+        ps_result = MagicMock()
+        ps_result.returncode = 0
+        ps_result.stdout = "pthahnix  1001  254.0  1.4 train.py\n"
+
+        def mock_subprocess_run(cmd, **kwargs):
+            cmd_str = ' '.join(cmd)
+            if '--query-gpu=' in cmd_str:
+                return gpu_info_result
+            elif '--query-compute-apps=' in cmd_str:
+                return compute_apps_result
+            elif cmd[0] == 'ps':
+                return ps_result
+            return MagicMock(returncode=1, stdout='')
+
+        args = type('Args', (), {'user': None, 'pretty': False})()
+
+        with patch('subprocess.run', side_effect=mock_subprocess_run), \
+             patch('sys.stdout', new_callable=io.StringIO) as mock_stdout:
+            try:
+                cmd_gpu(args)
+            except SystemExit:
+                pass
+            output = json.loads(mock_stdout.getvalue())
+
+        assert "gpus" in output
+        assert "processes" in output
+        assert len(output["gpus"]) == 1
+        assert output["gpus"][0]["index"] == 0
+        assert len(output["processes"]) == 1
+        proc = output["processes"][0]
+        assert proc["user"] == "pthahnix"
+        assert proc["pid"] == 1001
+        assert proc["gpu_memory"] == "4096 MiB"
+        assert proc["cuda_device"] == "cuda:0"
+        assert proc["procyon_registered"] is True
+        assert proc["procyon_name"] == "nurglings-01"
+
+    def test_gpu_user_filter(self):
+        """--user should filter processes to matching user only."""
+        from unittest.mock import patch, MagicMock
+        from procyon import cmd_gpu, ensure_dirs
+        import io
+
+        ensure_dirs()
+
+        gpu_info_result = MagicMock()
+        gpu_info_result.returncode = 0
+        gpu_info_result.stdout = "0, RTX 3090, 24576 MiB, 8192 MiB, 16384 MiB, 45 %, 62, GPU-uuid-0000\n"
+
+        compute_apps_result = MagicMock()
+        compute_apps_result.returncode = 0
+        compute_apps_result.stdout = (
+            "1001, GPU-uuid-0000, 4096 MiB\n"
+            "1002, GPU-uuid-0000, 2048 MiB\n"
+        )
+
+        ps_result = MagicMock()
+        ps_result.returncode = 0
+        ps_result.stdout = (
+            "pthahnix  1001  254.0  1.4 train.py\n"
+            "dyn       1002  460.0  0.7 main.py\n"
+        )
+
+        def mock_subprocess_run(cmd, **kwargs):
+            cmd_str = ' '.join(cmd)
+            if '--query-gpu=' in cmd_str:
+                return gpu_info_result
+            elif '--query-compute-apps=' in cmd_str:
+                return compute_apps_result
+            elif cmd[0] == 'ps':
+                return ps_result
+            return MagicMock(returncode=1, stdout='')
+
+        args = type('Args', (), {'user': 'pthahnix', 'pretty': False})()
+
+        with patch('subprocess.run', side_effect=mock_subprocess_run), \
+             patch('sys.stdout', new_callable=io.StringIO) as mock_stdout:
+            try:
+                cmd_gpu(args)
+            except SystemExit:
+                pass
+            output = json.loads(mock_stdout.getvalue())
+
+        assert len(output["processes"]) == 1
+        assert output["processes"][0]["user"] == "pthahnix"
+
+    def test_gpu_nvidia_smi_missing(self):
+        """Should print error and exit 1 when nvidia-smi fails."""
+        from unittest.mock import patch
+        from procyon import cmd_gpu, ensure_dirs
+        import io
+
+        ensure_dirs()
+
+        with patch('subprocess.run', side_effect=FileNotFoundError("nvidia-smi not found")), \
+             patch('sys.stdout', new_callable=io.StringIO) as mock_stdout:
+            try:
+                cmd_gpu(type('Args', (), {'user': None, 'pretty': False})())
+            except SystemExit as e:
+                assert e.code == 1
+            output = json.loads(mock_stdout.getvalue())
+            assert output["code"] == "NVIDIA_SMI_ERROR"

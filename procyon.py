@@ -730,6 +730,32 @@ def format_gpu_pretty(gpus, procs):
     return "\n".join(lines)
 
 
+def cmd_gpu(args):
+    """Show GPU process information."""
+    try:
+        gpus, uuid_map = query_gpu_info()
+    except (FileNotFoundError, OSError):
+        json_err("NVIDIA_SMI_ERROR", "nvidia-smi not found or failed to execute.")
+
+    if gpus is None:
+        json_err("NVIDIA_SMI_ERROR", "nvidia-smi returned an error.")
+
+    procs = query_gpu_processes(uuid_map)
+    procs = enrich_with_ps(procs)
+    procs = enrich_with_registry(procs)
+
+    # Apply user filter
+    user_filter = getattr(args, 'user', None)
+    if user_filter:
+        procs = [p for p in procs if p.get("user") == user_filter]
+
+    if getattr(args, 'pretty', False):
+        print(format_gpu_pretty(gpus, procs))
+        sys.exit(0)
+    else:
+        json_out({"gpus": gpus, "processes": procs})
+
+
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
@@ -786,6 +812,11 @@ def build_parser():
     p_issue.add_argument('--priority', default='normal', help='Priority level')
     p_issue.add_argument('--tag', default='bug', help='Issue tag')
 
+    # gpu
+    p_gpu = subparsers.add_parser('gpu', help='Show GPU process information')
+    p_gpu.add_argument('--user', default=None, help='Filter by username')
+    p_gpu.add_argument('--pretty', action='store_true', help='Human-readable output')
+
     return parser
 
 
@@ -801,6 +832,7 @@ DISPATCH = {
     'watch': cmd_watch,
     'run': cmd_run,
     'issue': cmd_issue,
+    'gpu': cmd_gpu,
 }
 
 
