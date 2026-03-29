@@ -945,3 +945,44 @@ class TestGpuCommand:
 
         assert enriched[0]["procyon_registered"] is False
         assert enriched[0]["procyon_name"] is None
+
+    def test_format_gpu_pretty_output(self):
+        from procyon import format_gpu_pretty
+
+        gpus = [
+            {"index": 0, "name": "NVIDIA GeForce RTX 3090",
+             "memory_total": "24576 MiB", "memory_used": "8192 MiB",
+             "memory_free": "16384 MiB", "utilization": "45 %",
+             "temperature": "62 C", "uuid": "GPU-uuid-0000"},
+        ]
+        procs = [
+            {"pid": 1001, "user": "pthahnix", "cpu_percent": 254.0,
+             "mem_percent": 1.4, "cmd": "train.py", "gpu_memory": "4096 MiB",
+             "gpu_utilization": "45 %", "gpu_index": 0, "cuda_device": "cuda:0",
+             "procyon_registered": True, "procyon_name": "nurglings-01"},
+        ]
+        output = format_gpu_pretty(gpus, procs)
+
+        assert "=== GPU Overview ===" in output
+        assert "GPU 0:" in output
+        assert "NVIDIA GeForce RTX 3090" in output
+        assert "8192 / 24576 MiB" in output
+        assert "=== GPU Processes ===" in output
+        assert "pthahnix" in output
+        assert "train.py" in output
+        assert "nurglings-01" in output
+        assert "* GPU_UTIL is per-card, not per-process" in output
+
+    def test_format_gpu_pretty_no_processes(self):
+        from procyon import format_gpu_pretty
+
+        gpus = [
+            {"index": 0, "name": "NVIDIA GeForce RTX 3090",
+             "memory_total": "24576 MiB", "memory_used": "0 MiB",
+             "memory_free": "24576 MiB", "utilization": "0 %",
+             "temperature": "35 C", "uuid": "GPU-uuid-0000"},
+        ]
+        output = format_gpu_pretty(gpus, [])
+
+        assert "=== GPU Overview ===" in output
+        assert "No GPU processes running." in output

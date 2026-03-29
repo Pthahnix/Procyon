@@ -681,6 +681,55 @@ def enrich_with_registry(procs):
     return procs
 
 
+def format_gpu_pretty(gpus, procs):
+    """Render GPU overview + process table as human-readable string."""
+    lines = []
+
+    # GPU Overview section
+    lines.append("=== GPU Overview ===")
+    for gpu in gpus:
+        mem_used = gpu["memory_used"].replace(" MiB", "")
+        mem_total = gpu["memory_total"].replace(" MiB", "")
+        try:
+            pct = int(float(mem_used) / float(mem_total) * 100)
+        except (ValueError, ZeroDivisionError):
+            pct = 0
+        util = gpu["utilization"].replace(" %", "").strip()
+        temp = gpu["temperature"].replace(" C", "").strip()
+        lines.append(
+            f"GPU {gpu['index']}: {gpu['name']}  |  "
+            f"{mem_used} / {mem_total} MiB ({pct}%)  |  "
+            f"Util: {util}%  |  Temp: {temp}\u00b0C"
+        )
+
+    lines.append("")
+
+    # Process table section
+    if not procs:
+        lines.append("No GPU processes running.")
+        return "\n".join(lines)
+
+    lines.append("=== GPU Processes ===")
+    headers = ["USER", "PID", "%CPU", "%MEM", "CMD", "GPU_MEM", "GPU_UTIL", "CUDA", "PROCYON"]
+    rows = []
+    for p in procs:
+        rows.append({
+            "USER": p["user"],
+            "PID": str(p["pid"]),
+            "%CPU": str(p["cpu_percent"]),
+            "%MEM": str(p["mem_percent"]),
+            "CMD": p["cmd"],
+            "GPU_MEM": p["gpu_memory"],
+            "GPU_UTIL": p["gpu_utilization"],
+            "CUDA": p["cuda_device"],
+            "PROCYON": p["procyon_name"] if p["procyon_registered"] else "-",
+        })
+    lines.append(pretty_table(rows, headers))
+    lines.append("")
+    lines.append("* GPU_UTIL is per-card, not per-process")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
