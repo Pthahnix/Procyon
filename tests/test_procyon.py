@@ -787,3 +787,42 @@ class TestKillYesFlag:
         rc, out, err = run_procyon('kill', '--name', 'dead_yes', '--yes')
         assert rc != 0
         assert out["code"] == "ALREADY_DEAD"
+
+
+class TestGpuCommand:
+    """Tests for procyon gpu subcommand."""
+
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        os.environ['PROCYON_HOME'] = self.tmpdir
+
+    def teardown_method(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        os.environ.pop('PROCYON_HOME', None)
+
+    def test_query_gpu_info_parses_nvidia_smi(self):
+        from unittest.mock import patch, MagicMock
+        sys.path.insert(0, os.path.dirname(PROCYON))
+        from procyon import query_gpu_info
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = (
+            "0, NVIDIA GeForce RTX 3090, 24576 MiB, 8192 MiB, 16384 MiB, 45 %, 62, GPU-uuid-0000\n"
+            "1, NVIDIA GeForce RTX 3090, 24576 MiB, 12288 MiB, 12288 MiB, 95 %, 78, GPU-uuid-1111\n"
+        )
+        with patch('subprocess.run', return_value=mock_result):
+            gpus, uuid_map = query_gpu_info()
+
+        assert len(gpus) == 2
+        assert gpus[0]["index"] == 0
+        assert gpus[0]["name"] == "NVIDIA GeForce RTX 3090"
+        assert gpus[0]["memory_total"] == "24576 MiB"
+        assert gpus[0]["memory_used"] == "8192 MiB"
+        assert gpus[0]["memory_free"] == "16384 MiB"
+        assert gpus[0]["utilization"] == "45 %"
+        assert gpus[0]["temperature"] == "62 C"
+        assert gpus[0]["uuid"] == "GPU-uuid-0000"
+        assert uuid_map["GPU-uuid-0000"] == {"index": 0, "utilization": "45 %"}
+        assert uuid_map["GPU-uuid-1111"] == {"index": 1, "utilization": "95 %"}

@@ -538,6 +538,50 @@ status: open
 
 
 # ---------------------------------------------------------------------------
+# GPU monitoring helpers
+# ---------------------------------------------------------------------------
+
+def query_gpu_info():
+    """Query nvidia-smi for GPU hardware info.
+
+    Returns:
+        (gpus, uuid_map) where gpus is a list of dicts and
+        uuid_map is {uuid: {"index": int, "utilization": str}}.
+    """
+    result = subprocess.run(
+        ['nvidia-smi',
+         '--query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu,uuid',
+         '--format=csv,noheader'],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        return None, None
+
+    gpus = []
+    uuid_map = {}
+    for line in result.stdout.strip().splitlines():
+        parts = [p.strip() for p in line.split(',')]
+        if len(parts) < 8:
+            continue
+        idx = int(parts[0])
+        util_str = parts[5]
+        uuid = parts[7]
+        gpu = {
+            "index": idx,
+            "name": parts[1],
+            "memory_total": parts[2],
+            "memory_used": parts[3],
+            "memory_free": parts[4],
+            "utilization": util_str,
+            "temperature": f"{parts[6]} C",
+            "uuid": uuid,
+        }
+        gpus.append(gpu)
+        uuid_map[uuid] = {"index": idx, "utilization": util_str}
+    return gpus, uuid_map
+
+
+# ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
 
