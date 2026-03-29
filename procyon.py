@@ -618,6 +618,47 @@ def query_gpu_processes(uuid_map):
     return procs
 
 
+def enrich_with_ps(procs):
+    """Enrich GPU process list with user/cpu/mem/cmd from ps.
+
+    Args:
+        procs: list of dicts from query_gpu_processes().
+
+    Returns:
+        Filtered list — only processes whose PID was found by ps.
+    """
+    if not procs:
+        return []
+
+    pids = [str(p["pid"]) for p in procs]
+    result = subprocess.run(
+        ['ps', '-p', ','.join(pids), '-o', 'user=,pid=,pcpu=,pmem=,comm='],
+        capture_output=True, text=True
+    )
+    # Build pid -> ps info mapping
+    ps_map = {}
+    for line in result.stdout.strip().splitlines():
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        pid = int(parts[1])
+        ps_map[pid] = {
+            "user": parts[0],
+            "cpu_percent": float(parts[2]),
+            "mem_percent": float(parts[3]),
+            "cmd": parts[4],
+        }
+
+    enriched = []
+    for proc in procs:
+        ps_info = ps_map.get(proc["pid"])
+        if ps_info is None:
+            continue  # PID vanished
+        proc.update(ps_info)
+        enriched.append(proc)
+    return enriched
+
+
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------

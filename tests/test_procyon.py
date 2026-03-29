@@ -853,3 +853,48 @@ class TestGpuCommand:
         assert procs[0]["cuda_device"] == "cuda:1"
         assert procs[2]["gpu_index"] == 0
         assert procs[2]["cuda_device"] == "cuda:0"
+
+    def test_enrich_with_ps_merges_process_info(self):
+        from unittest.mock import patch, MagicMock
+        from procyon import enrich_with_ps
+
+        procs = [
+            {"pid": 1001, "gpu_memory": "4096 MiB", "gpu_index": 0,
+             "gpu_utilization": "45 %", "cuda_device": "cuda:0"},
+            {"pid": 1002, "gpu_memory": "2048 MiB", "gpu_index": 1,
+             "gpu_utilization": "95 %", "cuda_device": "cuda:1"},
+        ]
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = (
+            "pthahnix  1001  254.0  1.4 train.py\n"
+            "dyn       1002  460.0  0.7 main.py\n"
+        )
+        with patch('subprocess.run', return_value=mock_result):
+            enriched = enrich_with_ps(procs)
+
+        assert len(enriched) == 2
+        assert enriched[0]["user"] == "pthahnix"
+        assert enriched[0]["cpu_percent"] == 254.0
+        assert enriched[0]["mem_percent"] == 1.4
+        assert enriched[0]["cmd"] == "train.py"
+        assert enriched[1]["user"] == "dyn"
+
+    def test_enrich_with_ps_skips_vanished_pid(self):
+        from unittest.mock import patch, MagicMock
+        from procyon import enrich_with_ps
+
+        procs = [
+            {"pid": 1001, "gpu_memory": "4096 MiB", "gpu_index": 0,
+             "gpu_utilization": "45 %", "cuda_device": "cuda:0"},
+            {"pid": 9999, "gpu_memory": "2048 MiB", "gpu_index": 1,
+             "gpu_utilization": "95 %", "cuda_device": "cuda:1"},
+        ]
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "pthahnix  1001  254.0  1.4 train.py\n"
+        with patch('subprocess.run', return_value=mock_result):
+            enriched = enrich_with_ps(procs)
+
+        assert len(enriched) == 1
+        assert enriched[0]["pid"] == 1001
