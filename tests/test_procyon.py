@@ -1129,3 +1129,23 @@ class TestGpuCommand:
                 assert e.code == 1
             output = json.loads(mock_stdout.getvalue())
             assert output["code"] == "NVIDIA_SMI_ERROR"
+
+    def test_gpu_no_gpus_detected(self):
+        """Should print message and exit 0 when no GPUs found."""
+        from unittest.mock import patch, MagicMock
+        from procyon import cmd_gpu, ensure_dirs
+        import io
+
+        ensure_dirs()
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+
+        with patch('subprocess.run', return_value=mock_result), \
+             patch('sys.stdout', new_callable=io.StringIO) as mock_stdout:
+            try:
+                cmd_gpu(type('Args', (), {'user': None, 'pretty': False})())
+            except SystemExit as e:
+                assert e.code == 0
+            assert "No NVIDIA GPUs detected." in mock_stdout.getvalue()
