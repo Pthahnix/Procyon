@@ -659,6 +659,28 @@ def enrich_with_ps(procs):
     return enriched
 
 
+def enrich_with_registry(procs):
+    """Add procyon_registered and procyon_name fields to each process.
+
+    Reads the Procyon registry and matches by PID.
+    """
+    try:
+        reg = load_registry()
+    except Exception:
+        reg = {"processes": {}}
+
+    # Build pid -> name mapping from registry
+    pid_to_name = {}
+    for name, entry in reg.get("processes", {}).items():
+        pid_to_name[entry["pid"]] = name
+
+    for proc in procs:
+        reg_name = pid_to_name.get(proc["pid"])
+        proc["procyon_registered"] = reg_name is not None
+        proc["procyon_name"] = reg_name
+    return procs
+
+
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------

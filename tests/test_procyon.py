@@ -898,3 +898,50 @@ class TestGpuCommand:
 
         assert len(enriched) == 1
         assert enriched[0]["pid"] == 1001
+
+    def test_enrich_with_registry_marks_registered(self):
+        from procyon import enrich_with_registry, ensure_dirs, save_registry
+
+        ensure_dirs()
+        reg = {
+            "processes": {
+                "nurglings-01": {"pid": 1001, "cmd": "train.py",
+                                 "checkpoint_dir": None, "started": "2026-03-29T00:00:00",
+                                 "registered_by": "run", "done_marker": "checkpoint_final.pt"},
+            },
+            "version": "0.2.0"
+        }
+        save_registry(reg)
+
+        procs = [
+            {"pid": 1001, "user": "pthahnix", "cmd": "train.py",
+             "gpu_memory": "4096 MiB", "gpu_index": 0,
+             "gpu_utilization": "45 %", "cuda_device": "cuda:0",
+             "cpu_percent": 254.0, "mem_percent": 1.4},
+            {"pid": 2002, "user": "dyn", "cmd": "main.py",
+             "gpu_memory": "2048 MiB", "gpu_index": 1,
+             "gpu_utilization": "95 %", "cuda_device": "cuda:1",
+             "cpu_percent": 460.0, "mem_percent": 0.7},
+        ]
+        enriched = enrich_with_registry(procs)
+
+        assert enriched[0]["procyon_registered"] is True
+        assert enriched[0]["procyon_name"] == "nurglings-01"
+        assert enriched[1]["procyon_registered"] is False
+        assert enriched[1]["procyon_name"] is None
+
+    def test_enrich_with_registry_missing_file(self):
+        from procyon import enrich_with_registry, ensure_dirs
+
+        ensure_dirs()
+        # No registry file saved — should still work
+        procs = [
+            {"pid": 1001, "user": "pthahnix", "cmd": "train.py",
+             "gpu_memory": "4096 MiB", "gpu_index": 0,
+             "gpu_utilization": "45 %", "cuda_device": "cuda:0",
+             "cpu_percent": 254.0, "mem_percent": 1.4},
+        ]
+        enriched = enrich_with_registry(procs)
+
+        assert enriched[0]["procyon_registered"] is False
+        assert enriched[0]["procyon_name"] is None
