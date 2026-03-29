@@ -826,3 +826,30 @@ class TestGpuCommand:
         assert gpus[0]["uuid"] == "GPU-uuid-0000"
         assert uuid_map["GPU-uuid-0000"] == {"index": 0, "utilization": "45 %"}
         assert uuid_map["GPU-uuid-1111"] == {"index": 1, "utilization": "95 %"}
+
+    def test_query_gpu_processes_parses_compute_apps(self):
+        from unittest.mock import patch, MagicMock
+        from procyon import query_gpu_processes
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = (
+            "3459739, GPU-uuid-1111, 4096 MiB\n"
+            "3462049, GPU-uuid-1111, 2048 MiB\n"
+            "2303783, GPU-uuid-0000, 4096 MiB\n"
+        )
+        uuid_map = {
+            "GPU-uuid-0000": {"index": 0, "utilization": "45 %"},
+            "GPU-uuid-1111": {"index": 1, "utilization": "95 %"},
+        }
+        with patch('subprocess.run', return_value=mock_result):
+            procs = query_gpu_processes(uuid_map)
+
+        assert len(procs) == 3
+        assert procs[0]["pid"] == 3459739
+        assert procs[0]["gpu_memory"] == "4096 MiB"
+        assert procs[0]["gpu_index"] == 1
+        assert procs[0]["gpu_utilization"] == "95 %"
+        assert procs[0]["cuda_device"] == "cuda:1"
+        assert procs[2]["gpu_index"] == 0
+        assert procs[2]["cuda_device"] == "cuda:0"

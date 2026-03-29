@@ -581,6 +581,43 @@ def query_gpu_info():
     return gpus, uuid_map
 
 
+def query_gpu_processes(uuid_map):
+    """Query nvidia-smi for GPU compute processes.
+
+    Args:
+        uuid_map: dict from query_gpu_info(), maps uuid to {index, utilization}.
+
+    Returns:
+        List of process dicts with pid, gpu_memory, gpu_index, gpu_utilization, cuda_device.
+    """
+    result = subprocess.run(
+        ['nvidia-smi',
+         '--query-compute-apps=pid,gpu_uuid,used_gpu_memory',
+         '--format=csv,noheader'],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        return []
+
+    procs = []
+    for line in result.stdout.strip().splitlines():
+        parts = [p.strip() for p in line.split(',')]
+        if len(parts) < 3:
+            continue
+        pid = int(parts[0])
+        uuid = parts[1]
+        gpu_mem = parts[2]
+        gpu_info = uuid_map.get(uuid, {"index": -1, "utilization": "N/A"})
+        procs.append({
+            "pid": pid,
+            "gpu_memory": gpu_mem,
+            "gpu_index": gpu_info["index"],
+            "gpu_utilization": gpu_info["utilization"],
+            "cuda_device": f"cuda:{gpu_info['index']}",
+        })
+    return procs
+
+
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
