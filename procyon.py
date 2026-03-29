@@ -632,13 +632,13 @@ def enrich_with_ps(procs):
 
     pids = [str(p["pid"]) for p in procs]
     result = subprocess.run(
-        ['ps', '-p', ','.join(pids), '-o', 'user=,pid=,pcpu=,pmem=,comm='],
+        ['ps', '-p', ','.join(pids), '-o', 'user=,pid=,pcpu=,pmem=,args='],
         capture_output=True, text=True
     )
     # Build pid -> ps info mapping
     ps_map = {}
     for line in result.stdout.strip().splitlines():
-        parts = line.split()
+        parts = line.split(None, 4)
         if len(parts) < 5:
             continue
         pid = int(parts[1])
