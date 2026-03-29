@@ -1149,3 +1149,87 @@ class TestGpuCommand:
             except SystemExit as e:
                 assert e.code == 0
             assert "No NVIDIA GPUs detected." in mock_stdout.getvalue()
+
+    def test_gpu_pretty_output_format(self):
+        """--pretty should produce the two-section human-readable output."""
+        from unittest.mock import patch, MagicMock
+        from procyon import cmd_gpu, ensure_dirs
+        import io
+
+        ensure_dirs()
+
+        gpu_info_result = MagicMock()
+        gpu_info_result.returncode = 0
+        gpu_info_result.stdout = "0, RTX 3090, 24576 MiB, 8192 MiB, 16384 MiB, 45 %, 62, GPU-uuid-0000\n"
+
+        compute_apps_result = MagicMock()
+        compute_apps_result.returncode = 0
+        compute_apps_result.stdout = "1001, GPU-uuid-0000, 4096 MiB\n"
+
+        ps_result = MagicMock()
+        ps_result.returncode = 0
+        ps_result.stdout = "pthahnix  1001  254.0  1.4 train.py\n"
+
+        def mock_subprocess_run(cmd, **kwargs):
+            cmd_str = ' '.join(cmd)
+            if '--query-gpu=' in cmd_str:
+                return gpu_info_result
+            elif '--query-compute-apps=' in cmd_str:
+                return compute_apps_result
+            elif cmd[0] == 'ps':
+                return ps_result
+            return MagicMock(returncode=1, stdout='')
+
+        args = type('Args', (), {'user': None, 'pretty': True})()
+
+        with patch('subprocess.run', side_effect=mock_subprocess_run), \
+             patch('sys.stdout', new_callable=io.StringIO) as mock_stdout:
+            try:
+                cmd_gpu(args)
+            except SystemExit:
+                pass
+            output = mock_stdout.getvalue()
+
+        assert "=== GPU Overview ===" in output
+        assert "GPU 0:" in output
+        assert "=== GPU Processes ===" in output
+        assert "pthahnix" in output
+        assert "cuda:0" in output
+        assert "* GPU_UTIL is per-card, not per-process" in output
+
+    def test_gpu_no_processes_json(self):
+        """Empty process list should return valid JSON with empty processes array."""
+        from unittest.mock import patch, MagicMock
+        from procyon import cmd_gpu, ensure_dirs
+        import io
+
+        ensure_dirs()
+
+        gpu_info_result = MagicMock()
+        gpu_info_result.returncode = 0
+        gpu_info_result.stdout = "0, RTX 3090, 24576 MiB, 0 MiB, 24576 MiB, 0 %, 35, GPU-uuid-0000\n"
+
+        compute_apps_result = MagicMock()
+        compute_apps_result.returncode = 0
+        compute_apps_result.stdout = ""
+
+        def mock_subprocess_run(cmd, **kwargs):
+            cmd_str = ' '.join(cmd)
+            if '--query-gpu=' in cmd_str:
+                return gpu_info_result
+            elif '--query-compute-apps=' in cmd_str:
+                return compute_apps_result
+            return MagicMock(returncode=1, stdout='')
+
+        args = type('Args', (), {'user': None, 'pretty': False})()
+
+        with patch('subprocess.run', side_effect=mock_subprocess_run), \
+             patch('sys.stdout', new_callable=io.StringIO) as mock_stdout:
+            try:
+                cmd_gpu(args)
+            except SystemExit:
+                pass
+            output = json.loads(mock_stdout.getvalue())
+
+        assert output["gpus"][0]["index"] == 0
+        assert output["processes"] == []
