@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROCYON_USER="$(whoami)"
@@ -55,11 +55,15 @@ profile procyon_training {
 "
     echo "  Writing AppArmor profile to ${PROFILE_PATH}"
     echo "  This requires sudo access."
-    echo "${PROFILE_CONTENT}" | sudo tee "${PROFILE_PATH}" > /dev/null
-    sudo apparmor_parser -r "${PROFILE_PATH}" 2>/dev/null || \
-        sudo aa-enforce "${PROFILE_PATH}" 2>/dev/null || \
-        echo "  WARNING: Could not load AppArmor profile. Run 'sudo aa-enforce ${PROFILE_PATH}' manually."
-    echo "  AppArmor profile loaded."
+    if echo "${PROFILE_CONTENT}" | sudo tee "${PROFILE_PATH}" > /dev/null 2>&1; then
+        sudo apparmor_parser -r "${PROFILE_PATH}" 2>/dev/null || \
+            sudo aa-enforce "${PROFILE_PATH}" 2>/dev/null || \
+            echo "  WARNING: Could not load AppArmor profile. Run 'sudo aa-enforce ${PROFILE_PATH}' manually."
+        echo "  AppArmor profile loaded."
+    else
+        echo "  WARNING: No sudo access. Skipping AppArmor setup."
+        echo "  Layer 1 (signal interception + TTY gate) will still work."
+    fi
 fi
 
 # --- Step 4: Make procyon.py executable ---

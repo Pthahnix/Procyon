@@ -146,18 +146,31 @@ subprocess.run(["python3", "/home/pthahnix/Procyon/procyon.py", "unregister",
 
 ## Setup
 
+No pip install, no build step. Clone and run:
+
 ```bash
-# Clone / already on server at ~/Procyon
-cd ~/Procyon
-
-# Optional: AppArmor profile (Layer 2 protection, requires sudo)
-bash install.sh
-
-# Verify
-python3 procyon.py status --pretty
+git clone https://github.com/Pthahnix/Procyon.git ~/Procyon
+python3 ~/Procyon/procyon.py status --pretty
 ```
 
-No pip install required. Python 3.10+ stdlib only.
+The `~/.procyon/` directory and registry are created automatically on first use.
+
+Optionally, add an alias:
+
+```bash
+echo "alias procyon='python3 ~/Procyon/procyon.py'" >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Optional: AppArmor (Layer 2)
+
+If you have sudo access and want kernel-level signal protection:
+
+```bash
+bash ~/Procyon/install.sh
+```
+
+This is not required — Layer 1 (anti-duplicate + TTY-gated kill) works without it.
 
 ## Requirements
 
