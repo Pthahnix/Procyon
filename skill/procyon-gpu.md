@@ -12,14 +12,17 @@ description: >
 ## Quick Usage
 
 ```bash
+# Visual dashboard with VRAM progress bars (recommended for humans)
+python3 ~/Procyon/procyon.py gpu --human
+
 # JSON output (default) — all users
 python3 ~/Procyon/procyon.py gpu
 
-# Human-readable table — all users
+# Plain table — all users
 python3 ~/Procyon/procyon.py gpu --pretty
 
 # Filter to a specific user
-python3 ~/Procyon/procyon.py gpu --user pthahnix --pretty
+python3 ~/Procyon/procyon.py gpu --user pthahnix --human
 ```
 
 ## Output Modes
@@ -73,12 +76,29 @@ pthahnix  3459738  2479   0.8  BARBARUS::NURGLINGS        3072 MiB    95 %      
 * GPU_UTIL is per-card, not per-process
 ```
 
+### Visual Dashboard (`--human`)
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GPU 0  RTX 3090          ▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░   8192 / 24576 MiB  33%  62°C │
+│ GPU 1  RTX 3090          ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░  22528 / 24576 MiB  91%  78°C │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+USER        PID     %CPU  %MEM  CMD                     GPU_MEM     UTIL  CUDA    PROCYON
+─────────── ─────── ───── ───── ─────────────────────── ─────────── ───── ─────── ────────────
+dyn         2303783   254   1.4  train_2m_Base-GNN.py   4096 MiB     45%  cuda:0  -
+pthahnix    3459738  2479   0.8  BARBARUS::NURGLINGS    3072 MiB     95%  cuda:1  nurglings-01
+
+ⓘ UTIL is per-card · 2 processes · 1/2 registered
+```
+
 ## Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--user USER` | all users | Filter processes to a specific user |
-| `--pretty` | off (JSON) | Human-readable table output |
+| `--pretty` | off (JSON) | Plain human-readable table output |
+| `--human` | off (JSON) | Visual dashboard with VRAM progress bars |
 
 ## Key Details
 

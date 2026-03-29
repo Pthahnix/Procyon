@@ -1254,3 +1254,107 @@ class TestGpuCommand:
 
         assert output["gpus"][0]["index"] == 0
         assert output["processes"] == []
+
+    def test_gpu_human_output_format(self):
+        """--human should produce box-drawing GPU cards and visual table."""
+        from unittest.mock import patch, MagicMock
+        from procyon import cmd_gpu, ensure_dirs
+        import io
+
+        ensure_dirs()
+
+        gpu_info_result = MagicMock()
+        gpu_info_result.returncode = 0
+        gpu_info_result.stdout = (
+            "0, NVIDIA GeForce RTX 3090, 24576 MiB, 8192 MiB, 16384 MiB, 45 %, 62, GPU-uuid-0000\n"
+            "1, NVIDIA GeForce RTX 3090, 24576 MiB, 22528 MiB, 2048 MiB, 95 %, 78, GPU-uuid-1111\n"
+        )
+
+        compute_apps_result = MagicMock()
+        compute_apps_result.returncode = 0
+        compute_apps_result.stdout = (
+            "1001, GPU-uuid-0000, 4096 MiB\n"
+            "1002, GPU-uuid-1111, 3072 MiB\n"
+        )
+
+        ps_result = MagicMock()
+        ps_result.returncode = 0
+        ps_result.stdout = (
+            "dyn       1001  254.0  1.4 train.py\n"
+            "pthahnix  1002 2479.0  0.8 NURGLINGS\n"
+        )
+
+        def mock_subprocess_run(cmd, **kwargs):
+            cmd_str = ' '.join(cmd)
+            if '--query-gpu=' in cmd_str:
+                return gpu_info_result
+            elif '--query-compute-apps=' in cmd_str:
+                return compute_apps_result
+            elif cmd[0] == 'ps':
+                return ps_result
+            return MagicMock(returncode=1, stdout='')
+
+        args = type('Args', (), {'user': None, 'pretty': False, 'human': True})()
+
+        with patch('subprocess.run', side_effect=mock_subprocess_run), \
+             patch('sys.stdout', new_callable=io.StringIO) as mock_stdout:
+            try:
+                cmd_gpu(args)
+            except SystemExit:
+                pass
+            output = mock_stdout.getvalue()
+
+        # Box-drawing characters
+        assert "\u250c" in output  # ┌
+        assert "\u2514" in output  # └
+        # Progress bar characters
+        assert "\u2593" in output  # ▓
+        assert "\u2591" in output  # ░
+        # GPU cards
+        assert "GPU 0" in output
+        assert "GPU 1" in output
+        # Separator line
+        assert "\u2500" in output  # ─
+        # Process data
+        assert "dyn" in output
+        assert "pthahnix" in output
+        # Footer
+        assert "2 processes" in output
+        assert "registered" in output
+
+    def test_gpu_human_no_processes(self):
+        """--human with no processes should show GPU cards and 'No GPU processes' message."""
+        from unittest.mock import patch, MagicMock
+        from procyon import cmd_gpu, ensure_dirs
+        import io
+
+        ensure_dirs()
+
+        gpu_info_result = MagicMock()
+        gpu_info_result.returncode = 0
+        gpu_info_result.stdout = "0, NVIDIA GeForce RTX 3090, 24576 MiB, 0 MiB, 24576 MiB, 0 %, 35, GPU-uuid-0000\n"
+
+        compute_apps_result = MagicMock()
+        compute_apps_result.returncode = 0
+        compute_apps_result.stdout = ""
+
+        def mock_subprocess_run(cmd, **kwargs):
+            cmd_str = ' '.join(cmd)
+            if '--query-gpu=' in cmd_str:
+                return gpu_info_result
+            elif '--query-compute-apps=' in cmd_str:
+                return compute_apps_result
+            return MagicMock(returncode=1, stdout='')
+
+        args = type('Args', (), {'user': None, 'pretty': False, 'human': True})()
+
+        with patch('subprocess.run', side_effect=mock_subprocess_run), \
+             patch('sys.stdout', new_callable=io.StringIO) as mock_stdout:
+            try:
+                cmd_gpu(args)
+            except SystemExit:
+                pass
+            output = mock_stdout.getvalue()
+
+        assert "GPU 0" in output
+        assert "No GPU processes running." in output

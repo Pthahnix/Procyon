@@ -49,7 +49,22 @@ The `run` wrapper:
 - Intercepts SIGTERM/SIGHUP (won't die from rogue `kill` calls)
 - Auto-unregisters when the child exits cleanly
 
-### 3. Safe kill (interactive terminal only)
+### 3. Check GPU usage
+
+```bash
+# Visual dashboard with VRAM progress bars
+python3 ~/Procyon/procyon.py gpu --human
+
+# Filter to your own processes
+python3 ~/Procyon/procyon.py gpu --user $(whoami) --human
+
+# JSON output (for scripts)
+python3 ~/Procyon/procyon.py gpu
+```
+
+Shows per-GPU VRAM usage, utilization, temperature, and per-process GPU memory with Procyon registration status. `--human` gives a visual dashboard, `--pretty` gives a plain table, default is JSON.
+
+### 4. Safe kill (interactive terminal only)
 
 ```bash
 python3 ~/Procyon/procyon.py kill --name rvq_pca
@@ -64,6 +79,7 @@ Will display job info and require you to type the job name to confirm. **Refuses
 | Command | Description |
 |---|---|
 | `procyon status [--pretty]` | List all registered processes and their health |
+| `procyon gpu [--user USER] [--pretty] [--human]` | Show GPU processes with VRAM, utilization, CUDA device |
 | `procyon run --name NAME -- CMD` | Wrapper mode: auto-register + signal protection |
 | `procyon kill --name NAME` | Safe kill with confirmation (TTY only) |
 | `procyon register --name NAME --pid PID --cmd CMD` | Register an existing process (for script integration) |

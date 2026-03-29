@@ -730,6 +730,93 @@ def format_gpu_pretty(gpus, procs):
     return "\n".join(lines)
 
 
+def format_gpu_human(gpus, procs):
+    """Render GPU dashboard with VRAM progress bars and visual table."""
+    lines = []
+    BAR_WIDTH = 24
+
+    # --- GPU card box ---
+    card_lines = []
+    for gpu in gpus:
+        mem_used_s = gpu["memory_used"].replace(" MiB", "")
+        mem_total_s = gpu["memory_total"].replace(" MiB", "")
+        try:
+            mem_used = float(mem_used_s)
+            mem_total = float(mem_total_s)
+            pct = int(mem_used / mem_total * 100) if mem_total > 0 else 0
+        except (ValueError, ZeroDivisionError):
+            pct = 0
+        filled = int(BAR_WIDTH * pct / 100)
+        bar = "\u2593" * filled + "\u2591" * (BAR_WIDTH - filled)
+        util = gpu["utilization"].replace(" %", "").strip()
+        temp = gpu["temperature"].replace(" C", "").strip()
+        name = gpu["name"].replace("NVIDIA ", "").replace("GeForce ", "")
+        card_lines.append(
+            f"\u2502 GPU {gpu['index']}  {name:<16s}  {bar}  "
+            f"{int(mem_used):>5d} / {int(mem_total):>5d} MiB  {pct:>3d}%  {temp:>2s}\u00b0C \u2502"
+        )
+
+    if card_lines:
+        max_w = max(len(l) for l in card_lines)
+        # Pad all lines to same width
+        padded = []
+        for l in card_lines:
+            diff = max_w - len(l)
+            # Insert padding before the trailing │
+            padded.append(l[:-1] + " " * diff + "\u2502")
+        max_w = max(len(l) for l in padded)
+        inner_w = max_w - 2  # exclude │ on each side
+        lines.append("\u250c" + "\u2500" * inner_w + "\u2510")
+        lines.extend(padded)
+        lines.append("\u2514" + "\u2500" * inner_w + "\u2518")
+
+    lines.append("")
+
+    # --- Process table ---
+    if not procs:
+        lines.append("No GPU processes running.")
+        return "\n".join(lines)
+
+    headers = ["USER", "PID", "%CPU", "%MEM", "CMD", "GPU_MEM", "UTIL", "CUDA", "PROCYON"]
+    rows = []
+    for p in procs:
+        util_val = p["gpu_utilization"].replace(" %", "").strip()
+        rows.append({
+            "USER": p["user"],
+            "PID": str(p["pid"]),
+            "%CPU": str(p["cpu_percent"]),
+            "%MEM": str(p["mem_percent"]),
+            "CMD": p["cmd"],
+            "GPU_MEM": p["gpu_memory"],
+            "UTIL": util_val + "%",
+            "CUDA": p["cuda_device"],
+            "PROCYON": p["procyon_name"] if p["procyon_registered"] else "-",
+        })
+
+    # Compute column widths
+    widths = {h: len(h) for h in headers}
+    for row in rows:
+        for h in headers:
+            widths[h] = max(widths[h], len(row[h]))
+
+    fmt = "  ".join(f"{{:<{widths[h]}}}" for h in headers)
+    lines.append(fmt.format(*headers))
+    lines.append("  ".join("\u2500" * widths[h] for h in headers))
+    for row in rows:
+        lines.append(fmt.format(*(row[h] for h in headers)))
+
+    # --- Footer ---
+    n_procs = len(procs)
+    n_reg = sum(1 for p in procs if p["procyon_registered"])
+    lines.append("")
+    lines.append(
+        f"\u24d8 UTIL is per-card \u00b7 {n_procs} process{'es' if n_procs != 1 else ''}"
+        f" \u00b7 {n_reg}/{n_procs} registered"
+    )
+
+    return "\n".join(lines)
+
+
 def cmd_gpu(args):
     """Show GPU process information."""
     try:
@@ -756,7 +843,10 @@ def cmd_gpu(args):
     if user_filter:
         procs = [p for p in procs if p.get("user") == user_filter]
 
-    if getattr(args, 'pretty', False):
+    if getattr(args, 'human', False):
+        print(format_gpu_human(gpus, procs))
+        sys.exit(0)
+    elif getattr(args, 'pretty', False):
         print(format_gpu_pretty(gpus, procs))
         sys.exit(0)
     else:
@@ -823,6 +913,7 @@ def build_parser():
     p_gpu = subparsers.add_parser('gpu', help='Show GPU process information')
     p_gpu.add_argument('--user', default=None, help='Filter by username')
     p_gpu.add_argument('--pretty', action='store_true', help='Human-readable output')
+    p_gpu.add_argument('--human', action='store_true', help='Visual dashboard output')
 
     return parser
 
