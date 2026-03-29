@@ -1,3 +1,6 @@
+# Server admin (local only)
+server-admin/
+
 # Claude Code
 .claude/
 .mcp.json
