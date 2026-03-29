@@ -21,6 +21,16 @@ Skill: procyon-usage
 
 Covers: `procyon status`, `procyon run`, `procyon register`, `procyon unregister`, `procyon issue`
 
+### GPU Monitoring → `procyon-gpu`
+
+Use when you need to **check GPU usage, VRAM, or find free GPUs**.
+
+```
+Skill: procyon-gpu
+```
+
+Covers: `procyon gpu`, `procyon gpu --pretty`, `procyon gpu --user USER`
+
 ### Development & Iteration → `procyon-iterate`
 
 Use when a **human explicitly instructs you to improve Procyon itself**.
@@ -39,6 +49,8 @@ Covers: reading open issues, designing fixes, implementing on a branch, testing,
 |------|-------|---------|
 | Check running jobs | `procyon-usage` | `procyon status --pretty` |
 | Launch training | `procyon-usage` | `procyon run --name JOB -- cmd` |
+| Check GPU usage | `procyon-gpu` | `procyon gpu --pretty` |
+| Find free GPUs | `procyon-gpu` | `procyon gpu` (parse JSON) |
 | File a bug | `procyon-usage` | `procyon issue --title "..." --body "..."` |
 | Fix Procyon bugs | `procyon-iterate` | Human says "iterate on Procyon" |
 | Add Procyon features | `procyon-iterate` | Human says "implement issue #NNN" |
