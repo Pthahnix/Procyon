@@ -744,7 +744,10 @@ def cmd_gpu(args):
         print("No NVIDIA GPUs detected.")
         sys.exit(0)
 
-    procs = query_gpu_processes(uuid_map)
+    try:
+        procs = query_gpu_processes(uuid_map)
+    except (FileNotFoundError, OSError):
+        json_err("NVIDIA_SMI_ERROR", "nvidia-smi not found or failed to execute.")
     procs = enrich_with_ps(procs)
     procs = enrich_with_registry(procs)
 
