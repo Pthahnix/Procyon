@@ -463,6 +463,22 @@ def cmd_run(args):
     sys.exit(exit_code)
 
 
+def _get_github_token():
+    """Get GitHub token: GITHUB_TOKEN env var -> gh auth token -> None."""
+    token = os.environ.get('GITHUB_TOKEN')
+    if token:
+        return token.strip()
+    try:
+        result = subprocess.run(
+            ['gh', 'auth', 'token'], capture_output=True, text=True
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except FileNotFoundError:
+        pass
+    return None
+
+
 def cmd_issue(args):
     """File an issue for future iteration."""
     import re

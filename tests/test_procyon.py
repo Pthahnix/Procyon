@@ -502,6 +502,40 @@ class TestRunCommand:
         proc.wait(timeout=5)
 
 
+class TestGetGithubToken:
+    def setup_method(self):
+        self.orig_token = os.environ.pop('GITHUB_TOKEN', None)
+
+    def teardown_method(self):
+        os.environ.pop('GITHUB_TOKEN', None)
+        if self.orig_token is not None:
+            os.environ['GITHUB_TOKEN'] = self.orig_token
+
+    def test_returns_env_var_when_set(self):
+        os.environ['GITHUB_TOKEN'] = 'ghp_test123'
+        from procyon import _get_github_token
+        assert _get_github_token() == 'ghp_test123'
+
+    def test_falls_back_to_gh_cli(self):
+        from procyon import _get_github_token
+        from unittest.mock import patch
+        mock_result = type('R', (), {'returncode': 0, 'stdout': 'gho_fromcli\n'})()
+        with patch('procyon.subprocess.run', return_value=mock_result) as m:
+            token = _get_github_token()
+            assert token == 'gho_fromcli'
+            m.assert_called_once_with(
+                ['gh', 'auth', 'token'], capture_output=True, text=True
+            )
+
+    def test_error_when_no_token_available(self):
+        from procyon import _get_github_token
+        from unittest.mock import patch
+        mock_result = type('R', (), {'returncode': 1, 'stdout': ''})()
+        with patch('procyon.subprocess.run', return_value=mock_result):
+            token = _get_github_token()
+            assert token is None
+
+
 class TestIssueCommand:
     def setup_method(self):
         self.tmpdir = tempfile.mkdtemp()
