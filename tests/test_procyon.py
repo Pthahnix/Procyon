@@ -540,60 +540,82 @@ class TestIssueCommand:
     def setup_method(self):
         self.tmpdir = tempfile.mkdtemp()
         os.environ['PROCYON_HOME'] = self.tmpdir
-        self.issues_dir = os.path.join(self.tmpdir, "issues")
-        os.makedirs(self.issues_dir)
-        os.environ['PROCYON_ISSUES_DIR'] = self.issues_dir
+        os.environ['GITHUB_TOKEN'] = 'ghp_testtoken'
 
     def teardown_method(self):
         import shutil
         shutil.rmtree(self.tmpdir, ignore_errors=True)
         os.environ.pop('PROCYON_HOME', None)
-        os.environ.pop('PROCYON_ISSUES_DIR', None)
+        os.environ.pop('GITHUB_TOKEN', None)
 
-    def test_issue_creates_file(self):
-        rc, out, err = run_procyon('issue', '--title', 'Test bug',
-                                   '--body', 'Something is broken')
-        assert rc == 0
+    def test_issue_creates_github_issue(self):
+        """Mock urllib to verify correct API call."""
+        from unittest.mock import patch, MagicMock
+        import io
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "number": 42, "html_url": "https://github.com/Pthahnix/Procyon/issues/42"
+        }).encode()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        # Call cmd_issue in-process so we can mock urllib
+        from procyon import cmd_issue
+        args = type('A', (), {'title': 'Test bug', 'body': 'Something is broken', 'label': []})()
+        captured = io.StringIO()
+        with patch('urllib.request.urlopen', return_value=mock_resp) as mock_urlopen, \
+             patch('sys.stdout', captured):
+            try:
+                cmd_issue(args)
+            except SystemExit:
+                pass
+        out = json.loads(captured.getvalue())
         assert out["status"] == "created"
-        assert "path" in out
-        # Verify file exists and has frontmatter
-        files = os.listdir(self.issues_dir)
-        md_files = [f for f in files if f.endswith('.md') and f != 'TODO.md']
-        assert len(md_files) == 1
-        content = open(os.path.join(self.issues_dir, md_files[0])).read()
-        assert "title: Test bug" in content
-        assert "status: open" in content
-        assert "Something is broken" in content
-        # Verify TODO.md was auto-created with entry
-        todo_path = os.path.join(self.issues_dir, 'TODO.md')
-        assert os.path.exists(todo_path)
-        todo_content = open(todo_path).read()
-        assert "- [ ]" in todo_content
-        assert "Test bug" in todo_content
+        assert out["number"] == 42
+        assert "github.com" in out["url"]
+        # Verify the request payload
+        call_args = mock_urlopen.call_args[0][0]
+        assert "Pthahnix/Procyon" in call_args.full_url
+        req_body = json.loads(call_args.data.decode())
+        assert req_body["title"] == "Test bug"
+        assert req_body["body"] == "Something is broken"
 
-    def test_issue_sequential_numbering(self):
-        run_procyon('issue', '--title', 'First', '--body', 'body1')
-        run_procyon('issue', '--title', 'Second', '--body', 'body2')
-        files = sorted(os.listdir(self.issues_dir))
-        md_files = [f for f in files if f.endswith('.md') and f != 'TODO.md']
-        assert len(md_files) == 2
-        assert '_001_' in md_files[0]
-        assert '_002_' in md_files[1]
-        # Verify TODO.md has both entries
-        todo_content = open(os.path.join(self.issues_dir, 'TODO.md')).read()
-        assert "#001" in todo_content
-        assert "#002" in todo_content
+    def test_issue_with_labels(self):
+        """Verify --label flags are passed as labels array."""
+        from unittest.mock import patch, MagicMock
+        import io
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "number": 43, "html_url": "https://github.com/Pthahnix/Procyon/issues/43"
+        }).encode()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
 
-    def test_issue_with_priority_and_tag(self):
-        rc, out, err = run_procyon('issue', '--title', 'Urgent',
-                                   '--body', 'Fix now',
-                                   '--priority', 'high', '--tag', 'feature')
-        assert rc == 0
-        files = os.listdir(self.issues_dir)
-        md_files = [f for f in files if f.endswith('.md') and f != 'TODO.md']
-        content = open(os.path.join(self.issues_dir, md_files[0])).read()
-        assert "priority: high" in content
-        assert "tag: feature" in content
+        from procyon import cmd_issue
+        args = type('A', (), {'title': 'Feature', 'body': 'Add thing',
+                              'label': ['enhancement', 'v2']})()
+        captured = io.StringIO()
+        with patch('urllib.request.urlopen', return_value=mock_resp) as mock_urlopen, \
+             patch('sys.stdout', captured):
+            try:
+                cmd_issue(args)
+            except SystemExit:
+                pass
+        req_body = json.loads(mock_urlopen.call_args[0][0].data.decode())
+        assert req_body["labels"] == ["enhancement", "v2"]
+
+    def test_issue_fails_without_token(self):
+        """No token available -> error with NO_GITHUB_TOKEN code."""
+        os.environ.pop('GITHUB_TOKEN', None)
+        env = os.environ.copy()
+        env.pop('GITHUB_TOKEN', None)
+        env['PATH'] = ''  # gh won't be found
+        result = subprocess.run(
+            [sys.executable, PROCYON, 'issue', '--title', 'Fail', '--body', 'No token'],
+            capture_output=True, text=True, env=env
+        )
+        out = json.loads(result.stdout)
+        assert out["code"] == "NO_GITHUB_TOKEN"
 
 
 class TestE2E:
@@ -601,14 +623,11 @@ class TestE2E:
     def setup_method(self):
         self.tmpdir = tempfile.mkdtemp()
         os.environ['PROCYON_HOME'] = self.tmpdir
-        os.environ['PROCYON_ISSUES_DIR'] = os.path.join(self.tmpdir, 'issues')
-        os.makedirs(os.environ['PROCYON_ISSUES_DIR'])
 
     def teardown_method(self):
         import shutil
         shutil.rmtree(self.tmpdir, ignore_errors=True)
         os.environ.pop('PROCYON_HOME', None)
-        os.environ.pop('PROCYON_ISSUES_DIR', None)
 
     def test_full_workflow_run_status_exit(self):
         # Start a short-lived child via procyon run
@@ -659,11 +678,17 @@ class TestE2E:
         proc.wait(timeout=5)
 
     def test_issue_creation_e2e(self):
-        rc, out, err = run_procyon('issue', '--title', 'E2E test issue',
-                                   '--body', 'Testing issue creation',
-                                   '--priority', 'low', '--tag', 'improvement')
-        assert rc == 0
-        assert out["status"] == "created"
+        """E2E: verify procyon issue error path works end-to-end."""
+        env = os.environ.copy()
+        env.pop('GITHUB_TOKEN', None)
+        env['PATH'] = ''
+        result = subprocess.run(
+            [sys.executable, PROCYON, 'issue', '--title', 'E2E test',
+             '--body', 'Testing'],
+            capture_output=True, text=True, env=env
+        )
+        out = json.loads(result.stdout)
+        assert out["code"] == "NO_GITHUB_TOKEN"
 
 
 class TestWatchdogLockUpdate:
