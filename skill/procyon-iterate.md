@@ -1,8 +1,7 @@
 ---
 name: procyon-iterate
 description: >
-  Use when instructed by a human to iterate on Procyon.
-  Reads issues/, plans upgrades, develops on a branch, runs tests, creates PR.
+  Fetches open GitHub issues from Pthahnix/Procyon, plans upgrades, develops on a branch, runs tests, creates PR.
   ONLY triggered by explicit human command.
 ---
 
@@ -33,12 +32,20 @@ Skipping steps 2 or 3 is FORBIDDEN. You may NOT jump from reading issues directl
 
 ### Phase 1: Discover
 
-#### 1.1 Read TODO Tracker
-Read `issues/TODO.md`. Unchecked items (`- [ ]`) are the open issues to address.
-Follow each link to read the full issue file and understand what needs to change.
+#### 1.1 Fetch Open Issues from GitHub
+Run:
+```bash
+gh issue list --repo Pthahnix/Procyon --state open --json number,title,body,labels
+```
+If `gh` is not available, use the GitHub API:
+```bash
+curl -s -H "Authorization: token $GITHUB_TOKEN" \
+  https://api.github.com/repos/Pthahnix/Procyon/issues?state=open
+```
+Parse the JSON response to get the list of open issues.
 
 #### 1.2 Present Issues to Human
-Summarize all unchecked issues from TODO.md. Ask the human which issues to address in this iteration (all, or a subset). Wait for confirmation before proceeding.
+Summarize all open issues from GitHub. Ask the human which issues to address in this iteration (all, or a subset). Wait for confirmation before proceeding.
 
 ### Phase 2: Design (MANDATORY)
 
@@ -135,10 +142,11 @@ git push && git push --tags
 ```
 
 #### 4.5 Close Issues
-For each resolved issue:
-1. Edit the issue file: change `status: open` to `status: resolved`
-2. Edit `issues/TODO.md`: change `- [ ]` to `- [x]` for each resolved item
-Commit and push.
+Issues are closed automatically when the PR merges, via `Closes #NNN` in the PR body (set in Phase 4.1).
+If an issue was not linked in the PR body, close it manually:
+```bash
+gh issue close NNN --repo Pthahnix/Procyon
+```
 
 #### 4.6 Deploy
 Sync updated procyon.py to server if needed.
@@ -151,4 +159,4 @@ python3 -m pytest tests/test_procyon.py -v  # verify old version works
 git commit -m "revert: rollback procyon.py to v{PREVIOUS_VERSION}"
 git push
 ```
-File an issue explaining what went wrong.
+Create a GitHub issue: `procyon issue --title "rollback: ..." --body "..."`

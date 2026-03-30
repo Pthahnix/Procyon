@@ -2,8 +2,6 @@
 
 Lightweight process protection for long-running ML workloads on shared Linux servers.
 
-Born from a real incident: a rogue Claude Code agent spawned duplicate training processes into a running VQ-VAE job, and a manual kill of what appeared to be duplicates turned out to be legitimate DataLoader workers — crashing the training at epoch 10/15 with no checkpoint saved.
-
 ## What It Does
 
 - **Anti-duplicate**: Prevents the same job slot from being launched twice (checks by name + lock file)
@@ -85,7 +83,7 @@ Will display job info and require you to type the job name to confirm. **Refuses
 | `procyon register --name NAME --pid PID --cmd CMD` | Register an existing process (for script integration) |
 | `procyon unregister --name NAME` | Remove from registry on clean exit |
 | `procyon watch [--stop] [--interval N]` | Start/stop background watchdog daemon (optional) |
-| `procyon issue --title T --body B` | File an issue for future iteration |
+| `procyon issue --title T --body B [--label L]` | Create a GitHub issue |
 
 All commands output JSON by default. Add `--pretty` for human-readable output.
 
@@ -146,20 +144,18 @@ subprocess.run(["python3", "/home/pthahnix/Procyon/procyon.py", "unregister",
 
 ## Setup
 
-No pip install, no build step. Clone and run:
+No pip install, no build step. Clone the repo, add the alias, and reload your shell:
 
 ```bash
 git clone https://github.com/Pthahnix/Procyon.git ~/Procyon
-python3 ~/Procyon/procyon.py status --pretty
-```
-
-The `~/.procyon/` directory and registry are created automatically on first use.
-
-Optionally, add an alias:
-
-```bash
 echo "alias procyon='python3 ~/Procyon/procyon.py'" >> ~/.bashrc
 source ~/.bashrc
+```
+
+The `~/.procyon/` directory and registry are created automatically on first use. Verify the install:
+
+```bash
+procyon status --pretty
 ```
 
 ### Optional: AppArmor (Layer 2)
