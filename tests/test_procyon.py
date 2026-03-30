@@ -614,6 +614,7 @@ class TestIssueCommand:
             [sys.executable, PROCYON, 'issue', '--title', 'Fail', '--body', 'No token'],
             capture_output=True, text=True, env=env
         )
+        assert result.returncode != 0
         out = json.loads(result.stdout)
         assert out["code"] == "NO_GITHUB_TOKEN"
 
@@ -687,6 +688,7 @@ class TestE2E:
              '--body', 'Testing'],
             capture_output=True, text=True, env=env
         )
+        assert result.returncode != 0
         out = json.loads(result.stdout)
         assert out["code"] == "NO_GITHUB_TOKEN"
 

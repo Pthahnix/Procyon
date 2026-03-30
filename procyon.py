@@ -489,8 +489,8 @@ def cmd_issue(args):
 
     token = _get_github_token()
     if not token:
-        json_out({"status": "error", "code": "NO_GITHUB_TOKEN",
-                  "message": "Set GITHUB_TOKEN or install gh CLI and run 'gh auth login'"})
+        print(json.dumps({"status": "error", "code": "NO_GITHUB_TOKEN",
+                          "message": "Set GITHUB_TOKEN or install gh CLI and run 'gh auth login'"}))
         sys.exit(1)
 
     url = f"https://api.github.com/repos/{GITHUB_REPO}/issues"
@@ -516,8 +516,8 @@ def cmd_issue(args):
             detail = json.loads(body).get('message', body)
         except (json.JSONDecodeError, ValueError):
             detail = body
-        json_out({"status": "error", "code": "GITHUB_API_ERROR",
-                  "message": detail, "http_status": e.code})
+        print(json.dumps({"status": "error", "code": "GITHUB_API_ERROR",
+                          "message": detail, "http_status": e.code}))
         sys.exit(1)
 
 
