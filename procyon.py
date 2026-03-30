@@ -151,14 +151,20 @@ def json_err(code, msg):
     sys.exit(1)
 
 
-def pretty_table(rows, headers):
-    """Return a formatted string table from rows (list of dicts) and headers (list of str)."""
+def pretty_table(rows, headers, max_col=None):
+    """Return a formatted string table from rows (list of dicts) and headers (list of str).
+    max_col: optional dict mapping header name to max display width (truncated with '…')."""
     if not rows:
         return "(no entries)"
+    max_col = max_col or {}
     col_widths = {h: len(h) for h in headers}
     for row in rows:
         for h in headers:
-            col_widths[h] = max(col_widths[h], len(str(row.get(h, ''))))
+            val = str(row.get(h, ''))
+            if h in max_col and len(val) > max_col[h]:
+                val = val[:max_col[h] - 1] + '…'
+                row[h] = val
+            col_widths[h] = max(col_widths[h], len(val))
     sep = '  '.join('-' * col_widths[h] for h in headers)
     header_line = '  '.join(h.ljust(col_widths[h]) for h in headers)
     lines = [header_line, sep]
@@ -708,7 +714,7 @@ def format_gpu_pretty(gpus, procs):
             "CUDA": p["cuda_device"],
             "PROCYON": p["procyon_name"] if p["procyon_registered"] else "-",
         })
-    lines.append(pretty_table(rows, headers))
+    lines.append(pretty_table(rows, headers, max_col={"CMD": 80}))
     lines.append("")
     lines.append("* GPU_UTIL is per-card, not per-process")
     return "\n".join(lines)
@@ -776,6 +782,12 @@ def format_gpu_human(gpus, procs):
             "CUDA": p["cuda_device"],
             "PROCYON": p["procyon_name"] if p["procyon_registered"] else "-",
         })
+
+    # Truncate CMD column
+    max_cmd = 80
+    for row in rows:
+        if len(row["CMD"]) > max_cmd:
+            row["CMD"] = row["CMD"][:max_cmd - 1] + "…"
 
     # Compute column widths
     widths = {h: len(h) for h in headers}
