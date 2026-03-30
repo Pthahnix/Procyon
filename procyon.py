@@ -479,78 +479,46 @@ def _get_github_token():
     return None
 
 
+GITHUB_REPO = "Pthahnix/Procyon"
+
+
 def cmd_issue(args):
-    """File an issue for future iteration."""
-    import re
+    """Create a GitHub issue via the REST API."""
+    import urllib.request
+    import urllib.error
 
-    # Determine issues directory
-    issues_dir_env = os.environ.get('PROCYON_ISSUES_DIR')
-    if issues_dir_env:
-        issues_dir = Path(issues_dir_env)
-    else:
-        # Auto-detect project root (walk up from __file__ looking for CLAUDE.md)
-        here = Path(__file__).parent.resolve()
-        project_root = here
-        for parent in [here] + list(here.parents):
-            if (parent / 'CLAUDE.md').exists():
-                project_root = parent
-                break
-        issues_dir = project_root / 'issues'
+    token = _get_github_token()
+    if not token:
+        json_out({"status": "error", "code": "NO_GITHUB_TOKEN",
+                  "message": "Set GITHUB_TOKEN or install gh CLI and run 'gh auth login'"})
+        sys.exit(1)
 
-    issues_dir.mkdir(parents=True, exist_ok=True)
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/issues"
+    payload = {"title": args.title, "body": args.body}
+    if args.label:
+        payload["labels"] = args.label
 
-    # Count existing issue .md files → next number (exclude TODO.md)
-    existing = sorted([f for f in issues_dir.iterdir()
-                       if f.suffix == '.md' and f.name != 'TODO.md'])
-    next_num = len(existing) + 1
+    data = json.dumps(payload).encode('utf-8')
+    req = urllib.request.Request(url, data=data, method='POST', headers={
+        'Authorization': f'token {token}',
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json',
+    })
 
-    # Slugify title
-    slug = re.sub(r'[^a-z0-9]+', '-', args.title.lower()).strip('-')[:50]
-
-    # Filename: YYYY-MM-DD_NNN_slug.md
-    date_str = datetime.now().strftime('%Y-%m-%d')
-    filename = f"{date_str}_{next_num:03d}_{slug}.md"
-    filepath = issues_dir / filename
-
-    # Write frontmatter + body
-    content = f"""---
-title: {args.title}
-priority: {args.priority}
-tag: {args.tag}
-date: {datetime.now().isoformat()}
-author: claude-code
-status: open
----
-
-{args.body}
-"""
-    filepath.write_text(content)
-
-    # Auto-append entry to TODO.md
-    todo_path = issues_dir / 'TODO.md'
-    todo_entry = f"- [ ] [#{next_num:03d} {args.title}]({filename})\n"
-    if todo_path.exists():
-        with open(todo_path, 'a') as f:
-            f.write(todo_entry)
-    else:
-        # Create TODO.md with header + first entry
-        todo_header = (
-            "# Procyon — Open Issues Tracker\n\n"
-            "> Auto-maintained by `procyon issue`. Each new issue is appended "
-            "here as an unchecked item.\n"
-            "> Resolved issues are checked off (`- [x]`) during the iterate "
-            "workflow.\n\n"
-        )
-        with open(todo_path, 'w') as f:
-            f.write(todo_header + todo_entry)
-
-    # Return relative path if possible
     try:
-        rel_path = str(filepath.relative_to(Path.cwd()))
-    except ValueError:
-        rel_path = str(filepath)
-
-    json_out({"status": "created", "path": rel_path})
+        with urllib.request.urlopen(req) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+            json_out({"status": "created", "number": result["number"],
+                      "url": result["html_url"]})
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        try:
+            detail = json.loads(body).get('message', body)
+        except (json.JSONDecodeError, ValueError):
+            detail = body
+        json_out({"status": "error", "code": "GITHUB_API_ERROR",
+                  "message": detail, "http_status": e.code})
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -919,11 +887,10 @@ def build_parser():
     p_run.add_argument('cmd_args', nargs=argparse.REMAINDER, help='Command to run')
 
     # issue
-    p_issue = subparsers.add_parser('issue', help='File an issue report')
+    p_issue = subparsers.add_parser('issue', help='Create a GitHub issue')
     p_issue.add_argument('--title', required=True, help='Issue title')
     p_issue.add_argument('--body', required=True, help='Issue body')
-    p_issue.add_argument('--priority', default='normal', help='Priority level')
-    p_issue.add_argument('--tag', default='bug', help='Issue tag')
+    p_issue.add_argument('--label', action='append', default=[], help='GitHub label (repeatable)')
 
     # gpu
     p_gpu = subparsers.add_parser('gpu', help='Show GPU process information')
